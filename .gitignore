@@ -1,0 +1,21 @@
+# Virtual environments
+.venv/
+ 
+# Python cache
+__pycache__/
+*.py[cod]
+ 
+# Poetry
+.poetry/
+.env
+ 
+# Test / lint cache
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+ 
+# VS Code (opzionale)
+.vscode/
+ 
+# OS
+.DS_Store
