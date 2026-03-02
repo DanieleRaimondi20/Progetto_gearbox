@@ -52,32 +52,35 @@ class ConstraintManager:
 
         Esempio: addGroundConstraint("pinion", ["X","Y"]) blocca le traslazioni X e Y.
         """
-        self.groundConstraints.append({
-            "constrainingGear": gearName,
-            "constrainingDofs": dofs
-        })
+        self.groundConstraints.append(
+            {"constrainingGear": gearName, "constrainingDofs": dofs}
+        )
 
-    def addGroundElasticConnection(self, gearName: str, dofs: list, stiffness: list, damping: list):
+    def addGroundElasticConnection(
+        self, gearName: str, dofs: list, stiffness: list, damping: list
+    ):
         """Aggiunge una connessione elastica/smorzata tra `gearName` e la terra.
 
         - `dofs`: lista di gradi di libertà coinvolti (ordine coerente con stiffness/damping)
         - `stiffness`, `damping`: valori (o liste) per ciascun dof
         """
-        self.groundElasticConnections.append({
-            "constrainingGear": gearName,
-            "constrainingDofs": dofs,
-            "stiffness": stiffness,
-            "damping": damping
-        })
+        self.groundElasticConnections.append(
+            {
+                "constrainingGear": gearName,
+                "constrainingDofs": dofs,
+                "stiffness": stiffness,
+                "damping": damping,
+            }
+        )
 
     def addMeshConnection(self, gearName1, gearName2):
         """Aggiunge una connessione tra due ingranaggi (mesh).
 
         `stiffness` e `damping` possono essere valori scalari o callable(t) per dipendenza dal tempo.
         """
-        self.meshConnections.append({
-            "constrainingGear1": gearName1,
-            "constrainingGear2": gearName2})
+        self.meshConnections.append(
+            {"constrainingGear1": gearName1, "constrainingGear2": gearName2}
+        )
 
     # # Nota: i metodi assembleConstraints / assemble_inputs qui sotto sono indicativi.
     # # In alcune versioni del progetto il manager tiene riferimenti a `self.model` e a
@@ -117,6 +120,7 @@ class ConstraintManager:
 # Modello generico che raccoglie ingranaggi e applica vincoli
 # -------------------------
 
+
 class LoadManager:
     """Gestisce funzioni di input (forze/coppie) e rimozioni temporanee."""
 
@@ -130,16 +134,13 @@ class LoadManager:
 
     def removeInput(self, gearName: str, input: list):
         """Segnala rimozione dell'input (viene applicata da assembleLoads)."""
-        self.inputsToRemove.append({
-            "targetGear": gearName,
-            "removingInputs": input
-        })
+        self.inputsToRemove.append({"targetGear": gearName, "removingInputs": input})
 
     def addInputFunction(self, gearName: str, inputFunctionDict: dict[str, callable]):
-        inputDict = {":".join([gearName,key]): value for key, value in inputFunctionDict.items()}
+        inputDict = {
+            ":".join([gearName, key]): value for key, value in inputFunctionDict.items()
+        }
         self.inputFunctions.append(inputDict)
-
-    
 
     # def applyRemovals(self, input_names: list[str]) -> list[str]:
     #     """Ritorna la lista di input_names filtrata per rimozioni."""
@@ -176,18 +177,13 @@ class GenericModel:
             "Aoff": {},
             "B": [],
             "dofs": [],
-            "inputs": []}
+            "inputs": [],
+        }
 
         # lista di manager (ConstraintManager) registrati
-        self.constraintManagers = {
-            "names": [],
-            "managers": []
-        }
+        self.constraintManagers = {"names": [], "managers": []}
 
-        self.loadManagers = {
-            "names": [],
-            "managers": []
-        }
+        self.loadManagers = {"names": [], "managers": []}
 
         # Load manager e mappa per gli input
         # self.loadManager = LoadManager()
@@ -237,7 +233,7 @@ class GenericModel:
 
         # Supportiamo diverse strutture possibili di `dof_meta`.
         for dof in dofs:
-            vel = dof+"d"
+            vel = dof + "d"
             if dof == "T":
                 inp = "Tt"
             else:
@@ -254,13 +250,15 @@ class GenericModel:
             idx_vel = self.gears["dofs"][gidx].index(vel)
             idx_inp = self.gears["inputs"][gidx].index(inp)
             self.gears["A"][gidx] = np.delete(
-                self.gears["A"][gidx], [idx_pos, idx_vel], 0)
+                self.gears["A"][gidx], [idx_pos, idx_vel], 0
+            )
             self.gears["A"][gidx] = np.delete(
-                self.gears["A"][gidx], [idx_pos, idx_vel], 1)
+                self.gears["A"][gidx], [idx_pos, idx_vel], 1
+            )
             self.gears["B"][gidx] = np.delete(
-                self.gears["B"][gidx], [idx_pos, idx_vel], 0)
-            self.gears["B"][gidx] = np.delete(
-                self.gears["B"][gidx], idx_inp, 1)
+                self.gears["B"][gidx], [idx_pos, idx_vel], 0
+            )
+            self.gears["B"][gidx] = np.delete(self.gears["B"][gidx], idx_inp, 1)
             del self.gears["dofs"][gidx][idx_pos]
             del self.gears["dofs"][gidx][idx_vel]
             del self.gears["inputs"][gidx][idx_inp]
@@ -271,8 +269,7 @@ class GenericModel:
         Trova gli indici locali di stato corrispondenti ai dof richiesti e:
         - aggiunge rigidezza e damping ai 'dofs'
         """
-        print(
-            f"assembling ground elastic connection on gear='{gear}' dofs={dofs}")
+        print(f"assembling ground elastic connection on gear='{gear}' dofs={dofs}")
 
         if gear not in self.gears["names"]:
             raise ValueError(f"Gear '{gear}' not found in model")
@@ -280,7 +277,7 @@ class GenericModel:
         gidx = self.gears["names"].index(gear)
 
         for ndof, dof in enumerate(dofs):
-            vel = dof+"d"
+            vel = dof + "d"
             if dof not in self.gears["dofs"][gidx]:
                 raise ValueError(f"Dof '{dof}' not found in Gear '{gear}'")
             if vel not in self.gears["dofs"][gidx]:
@@ -289,10 +286,12 @@ class GenericModel:
             idx_pos = self.gears["dofs"][gidx].index(dof)
             idx_vel = self.gears["dofs"][gidx].index(vel)
 
-            self.gears["A"][gidx][idx_vel, idx_vel] -= damping[ndof] / \
-                self.gears["gears"][gidx].inertia[dof]
-            self.gears["A"][gidx][idx_vel, idx_pos] -= stiffness[ndof] / \
-                self.gears["gears"][gidx].inertia[dof]
+            self.gears["A"][gidx][idx_vel, idx_vel] -= (
+                damping[ndof] / self.gears["gears"][gidx].inertia[dof]
+            )
+            self.gears["A"][gidx][idx_vel, idx_pos] -= (
+                stiffness[ndof] / self.gears["gears"][gidx].inertia[dof]
+            )
 
     def checkMeshConnection(self, g1name, g2name):
         if g1name not in self.gears["names"]:
@@ -300,8 +299,8 @@ class GenericModel:
         if g2name not in self.gears["names"]:
             raise ValueError(f"Gear '{g2name}' not found in model")
 
-        dofPos = "T"      # posizione angolare
-        dofVel = "Td"     # velocità angolare
+        dofPos = "T"  # posizione angolare
+        dofVel = "Td"  # velocità angolare
 
         # Validazione e ricerca indici per gear1
         if f"{g1name}:{dofPos}" not in self.dofs:
@@ -314,20 +313,20 @@ class GenericModel:
             raise ValueError(f"Dof '{g2name}:{dofPos}' not found in dofs")
         if f"{g2name}:{dofPos}" not in self.dofs:
             raise ValueError(f"Dof '{g2name}:{dofVel}' not found in dofs")
-        
+
     def assembleMeshConnection(self, g1name, g2name, t, x, deltaAc):
-        
+
         print(f"Sim Time: {t}")
         # ============================================================
         # 1: Identificazione indici dei due ingranaggi
         # ============================================================
-        
+
         gidx1 = self.gears["names"].index(g1name)
         gidx2 = self.gears["names"].index(g2name)
- 
+
         gear1 = self.gears["gears"][gidx1]
         gear2 = self.gears["gears"][gidx2]
-        
+
         # Normalizza stiffness e damping (possono essere scalari o liste)
         I1 = gear1.inertia["T"]
         I2 = gear2.inertia["T"]
@@ -335,17 +334,17 @@ class GenericModel:
         Rb2 = gear2.radius["base"]
         km1 = gear1.exampleMeshStiffness(t, x)
         km2 = gear2.exampleMeshStiffness(t, x)
-        km = 1/(1/km1 + 1/km2)
+        km = 1 / (1 / km1 + 1 / km2)
         cm1 = gear1.exampleMeshDamping(t, x)
         cm2 = gear2.exampleMeshDamping(t, x)
-        cm = 1/(1/cm1 + 1/cm2)
+        cm = 1 / (1 / cm1 + 1 / cm2)
 
         # ============================================================
         # 2: Identificazione posizione (indice) del gdl "T" per i due ingranaggi
         # ============================================================
-        dofPos = "T"      # posizione angolare
-        dofVel = "Td"     # velocità angolare
-     
+        dofPos = "T"  # posizione angolare
+        dofVel = "Td"  # velocità angolare
+
         idxPos1 = self.dofs.index(f"{g1name}:{dofPos}")
         idxVel1 = self.dofs.index(f"{g1name}:{dofVel}")
 
@@ -355,18 +354,18 @@ class GenericModel:
         # ============================================================
         # 3: Costruzione matrice A(gidx1, gidx2) con coupling mesh
         # ============================================================
-    
-        # Modifica matrice A di gear1 - coupling con gear2
-        
-        deltaAc[idxVel1, idxVel1] -= cm * Rb1**2 / I1           # -c/I1 on θ̇1 term
-        deltaAc[idxVel1, idxPos1] -= km * Rb1**2 / I1           # -k/I1 on θ1 term
-        deltaAc[idxVel1, idxVel2] -= cm * Rb1*Rb2 / I1           # -c/I1 on θ̇1 term
-        deltaAc[idxVel1, idxPos2] -= km * Rb1*Rb2 / I1           # -k/I1 on θ1 term
 
-        deltaAc[idxVel2, idxVel2] -= cm * Rb2**2 / I2           # -c/I1 on θ̇1 term
-        deltaAc[idxVel2, idxPos2] -= km * Rb2**2 / I2           # -k/I1 on θ1 term
-        deltaAc[idxVel2, idxVel1] -= cm * Rb1*Rb2 / I2           # -c/I1 on θ̇1 term
-        deltaAc[idxVel2, idxPos1] -= km * Rb1*Rb2 / I2           # -k/I1 on θ1 term
+        # Modifica matrice A di gear1 - coupling con gear2
+
+        deltaAc[idxVel1, idxVel1] -= cm * Rb1**2 / I1  # -c/I1 on θ̇1 term
+        deltaAc[idxVel1, idxPos1] -= km * Rb1**2 / I1  # -k/I1 on θ1 term
+        deltaAc[idxVel1, idxVel2] -= cm * Rb1 * Rb2 / I1  # -c/I1 on θ̇1 term
+        deltaAc[idxVel1, idxPos2] -= km * Rb1 * Rb2 / I1  # -k/I1 on θ1 term
+
+        deltaAc[idxVel2, idxVel2] -= cm * Rb2**2 / I2  # -c/I1 on θ̇1 term
+        deltaAc[idxVel2, idxPos2] -= km * Rb2**2 / I2  # -k/I1 on θ1 term
+        deltaAc[idxVel2, idxVel1] -= cm * Rb1 * Rb2 / I2  # -c/I1 on θ̇1 term
+        deltaAc[idxVel2, idxPos1] -= km * Rb1 * Rb2 / I2  # -k/I1 on θ1 term
         return deltaAc
 
     def assembleRemovedInput(self, gear, inputs):
@@ -390,7 +389,9 @@ class GenericModel:
                 dof = "Y"
                 vel = "Yd"
             else:
-                raise ValueError(f"Input='{inp}' is invalid. It must be either 'Fx', 'Fy' or 'Tt'" )
+                raise ValueError(
+                    f"Input='{inp}' is invalid. It must be either 'Fx', 'Fy' or 'Tt'"
+                )
 
             if dof not in self.gears["dofs"][gidx]:
                 raise ValueError(f"Dof '{dof}' not found in Gear '{gear}'")
@@ -402,8 +403,7 @@ class GenericModel:
             idx_pos = self.gears["dofs"][gidx].index(dof)
             idx_vel = self.gears["dofs"][gidx].index(vel)
             idx_inp = self.gears["inputs"][gidx].index(inp)
-            self.gears["B"][gidx] = np.delete(
-                self.gears["B"][gidx], idx_inp, 1)
+            self.gears["B"][gidx] = np.delete(self.gears["B"][gidx], idx_inp, 1)
             del self.gears["inputs"][gidx][idx_inp]
 
     def assembleModel(self, constraintManagerName, loadManagerName):
@@ -413,7 +413,7 @@ class GenericModel:
         vengono iterate le sue liste per applicare i vincoli (rigidi, elastici,
         mesh). Al momento i metodi di applicazione sono placeholder.
         """
-        
+
         # 1) Recupera il manager registrato
         if constraintManagerName not in self.constraintManagers["names"]:
             raise ValueError(f"ConstraintManager '{constraintManagerName}' not found")
@@ -431,48 +431,50 @@ class GenericModel:
         for groundConstraint in cmanager.groundConstraints:
             self.assembleGroundConstraint(
                 groundConstraint["constrainingGear"],
-                groundConstraint["constrainingDofs"])
+                groundConstraint["constrainingDofs"],
+            )
 
         for groundElasticConnection in cmanager.groundElasticConnections:
             self.assembleElasticGroundConnection(
                 groundElasticConnection["constrainingGear"],
                 groundElasticConnection["constrainingDofs"],
                 groundElasticConnection["stiffness"],
-                groundElasticConnection["damping"])
-        
+                groundElasticConnection["damping"],
+            )
+
         for inputToRemove in lmanager.inputsToRemove:
             self.assembleRemovedInput(
-                inputToRemove["targetGear"],
-                inputToRemove["removingInputs"])
-            
+                inputToRemove["targetGear"], inputToRemove["removingInputs"]
+            )
+
         self.dofs = []
         self.inputs = []
         self.inputFunctions = {}
-             
+
         for gidx, gname in enumerate(self.gears["names"]):
             print(f"Assembling Gear N° {gidx}: '{gname}'")
             for dof in self.gears["dofs"][gidx]:
                 self.dofs.append(f"{gname}:{dof}")
-            for inp in self.gears["inputs"][gidx]:         
+            for inp in self.gears["inputs"][gidx]:
                 self.inputs.append(f"{gname}:{inp}")
-        
+
         self.Ac = sc.linalg.block_diag(*self.gears["A"])
         self.Bc = sc.linalg.block_diag(*self.gears["B"])
 
         for meshConnection in cmanager.meshConnections:
             self.checkMeshConnection(
-                meshConnection["constrainingGear1"],
-                meshConnection["constrainingGear2"])
-        
+                meshConnection["constrainingGear1"], meshConnection["constrainingGear2"]
+            )
+
         for inputFunction in lmanager.inputFunctions:
             for targetInput, targetFunction in inputFunction.items():
                 if targetInput not in self.inputs:
                     raise ValueError(f"Input '{targetInput}' not found in inputs.")
                 else:
                     self.inputFunctions[targetInput] = targetFunction
-        
+
         print("Model succesfully assembled")
- 
+
     def equations(self, t=None, x=None):
         """Costruisce il vettore risultato delle equazioni di stato: A*x + B*u.
 
@@ -482,20 +484,25 @@ class GenericModel:
         """
         if x is None:
             raise ValueError("State vector x must be provided")
-        x = np.asarray(x).reshape((-1,1))
-        #if x.size != self.Ac.shape[0]:
-            #raise ValueError(f"State vector length {x.size} != {self.Ac.shape[0]} (Ac.shape[0])")
+        x = np.asarray(x).reshape((-1, 1))
+        # if x.size != self.Ac.shape[0]:
+        # raise ValueError(f"State vector length {x.size} != {self.Ac.shape[0]} (Ac.shape[0])")
 
         deltaAc = np.zeros(self.Ac.shape)
         for meshConnection in self.activeConstraintManager.meshConnections:
             deltaAc = self.assembleMeshConnection(
                 meshConnection["constrainingGear1"],
                 meshConnection["constrainingGear2"],
-                t, x, deltaAc)
+                t,
+                x,
+                deltaAc,
+            )
 
         # valuta ingressi tramite LoadManager (1D array)
 
-        u = np.array([self.inputFunctions[inp](t, x) for inp in self.inputs]).reshape([-1,1])
+        u = np.array([self.inputFunctions[inp](t, x) for inp in self.inputs]).reshape(
+            [-1, 1]
+        )
         # u = self.loadManager.evaluate(t, self.inputs) if len(self.inputs) > 0 else np.zeros(0)
 
         return (self.Ac + deltaAc) @ x + self.Bc @ u
@@ -512,53 +519,44 @@ def main():
     gear.assignGeometricalProperties(
         module=3.2,
         teethNumber=31,
-        pressureAngle=20*np.pi/180,
-        thickness=0.0381*1e3)
-    gear.assignMaterialProperties(
-        young=2.068*1e5,
-        poisson=0.3)
-    gear.assignDynamicProperties(
-        massX=1,
-        massY=1,
-        inertiaT=0.5)
+        pressureAngle=20 * np.pi / 180,
+        thickness=0.0381 * 1e3,
+    )
+    gear.assignMaterialProperties(young=2.068 * 1e5, poisson=0.3)
+    gear.assignDynamicProperties(massX=1, massY=1, inertiaT=0.5)
     print("object created")
 
     pinion = gm.spurGear(name="pinionProva")
     pinion.assignGeometricalProperties(
         module=3.2,
         teethNumber=19,
-        pressureAngle=20*np.pi/180,
-        thickness=0.0381*1e3)
-    pinion.assignMaterialProperties(
-        young=2.068*1e5,
-        poisson=0.3)
-    pinion.assignDynamicProperties(
-        massX=0.5,
-        massY=0.5,
-        inertiaT=0.2)
+        pressureAngle=20 * np.pi / 180,
+        thickness=0.0381 * 1e3,
+    )
+    pinion.assignMaterialProperties(young=2.068 * 1e5, poisson=0.3)
+    pinion.assignDynamicProperties(massX=0.5, massY=0.5, inertiaT=0.2)
     print("object created")
 
     model = GenericModel(name="ModelloProva")
     model.addGear(gear)
     model.addGear(pinion)
 
-
     modelCM = ConstraintManager("constraints1")
     modelCM.addGroundConstraint("gearProva", ["Y"])
     modelCM.addGroundConstraint("pinionProva", ["X", "Y"])
     # modelCM.addGroundElasticConnection(
     #     "pinionProva", ["X", "Y"], [1e4, 1e5], [0.5, 0.8])
-    modelCM.addMeshConnection("gearProva","pinionProva")
+    modelCM.addMeshConnection("gearProva", "pinionProva")
 
     modelLM = LoadManager("loads1")
-    modelLM.removeInput("gearProva",["Fx"])
-    modelLM.addInputFunction("gearProva",{"Tt": lambda t, x: np.sin(t)})
-    modelLM.addInputFunction("pinionProva",{"Tt": lambda t, x: 1.0})
-    
+    modelLM.removeInput("gearProva", ["Fx"])
+    modelLM.addInputFunction("gearProva", {"Tt": lambda t, x: np.sin(t)})
+    modelLM.addInputFunction("pinionProva", {"Tt": lambda t, x: 1.0})
+
     model.addConstraintManager(modelCM)
     model.addLoadManager(modelLM)
 
-    model.assembleModel("constraints1","loads1")
+    model.assembleModel("constraints1", "loads1")
 
     x0 = np.zeros(model.Ac.shape[0])
     xd = model.equations(0.01, x0)
