@@ -23,23 +23,6 @@ class spurGear:
     def __init__(self, name: str):
         self.name = name
 
-    def assignGeometricalProperties(
-        self, module: float, teethNumber: int, pressureAngle: float, thickness: float
-    ):
-        self.module = module
-        self.teethNumber = teethNumber
-        self.pressureAngle = pressureAngle
-        self.thickness = thickness
-        self.computeDiameters()
-        self.computeRadiuses()
-
-    def assignMaterialProperties(self, young: float, poisson: float):
-        self.young = young
-        self.poisson = poisson
-
-    def assignDynamicProperties(self, massX: float, massY: float, inertiaT: float):
-        self.inertia = {"X": massX, "Y": massY, "T": inertiaT}
-
     def computeDiameters(self):
         pitch_diameter = self.teethNumber * self.module
         self.diameter = {
@@ -53,9 +36,98 @@ class spurGear:
 
     def computeRadiuses(self):
         self.radius = {key: value / 2 for key, value in self.diameter.items()}
+    
+    def compute_phi_angle(self, diameter: float) -> float:
+        return np.sqrt(diameter**2 / self.diameter["base"] ** 2 - 1)
 
-    def exampleMeshStiffness(self, t, x):
-        return 50 + 25 * np.sin(t)
+    def compute_csi_angle(self, diameter: float) -> float:
+        return np.arcsin(
+            self.compute_phi_angle(diameter)
+            / np.sqrt(1 + self.compute_phi_angle(diameter) ** 2)
+        )
+
+    def compute_alpha_angle(self):
+        alpha2 = (
+            np.pi / (2 * self.teeth_number)
+            + np.tan(self.pressureAngle)
+            - self.pressureAngle
+        )
+        if self.root_greater_than_base:
+            self.alpha = {
+                2: alpha2,
+                4: alpha2 - self.compute_psi_angle(self.diameter["root"]),
+                5: self.compute_phi_angle(self.diameter["root"]) - alpha2,
+            }
+        else:
+            self.alpha = {
+                2: alpha2,
+                3: np.arcsin(
+                    self.radius["base"] / self.radius["root"] * np.sin(alpha2)
+                ),
+            }
+            self.angle_at_base = 2 * alpha2
+            
+    def assignGeometricalProperties(
+        self, module: float, teethNumber: int, pressureAngle: float, thickness: float
+    ):
+        self.module = module
+        self.teethNumber = teethNumber
+        self.pressureAngle = pressureAngle
+        self.thickness = thickness
+        self.computeDiameters()
+        self.computeRadiuses()
+        self.compute_alpha_angle()
+        
+    def assignMaterialProperties(self, young: float, poisson: float):
+        self.young = young
+        self.poisson = poisson
+
+    def assignDynamicProperties(self, massX: float, massY: float, inertiaT: float):
+        self.inertia = {"X": massX, "Y": massY, "T": inertiaT}
+
+ 
+        
+    def computeTeethPosition(self, gearAngle: float):
+        pitch_angle = 2 * np.pi / self.teethNumber
+        pitch_angle_vector = np.arange(self.teethNumber) * pitch_angle
+        return gearAngle + pitch_angle_vector
+        
+        
+    def compute_teeth_engagement(self, teethAngles):
+        """
+        Calcola l'engagement e l'angolo di engagement richiamando computeTeethAngles.
+        """
+         
+        phig_a = self.compute_phi_angle(self.diameter["addendum"])
+        phig_r = self.compute_phi_angle(self.diameter["root"])
+    
+        # Calcola thetagi
+        thetagi = teethAngles + self.angle_at_base/2
+    
+        # Condizione di engagement
+        engagement = np.logical_and(
+            thetagi >= -self.pressureAngle + phig_r,
+            thetagi < - self.pressureAngle + phig_a
+        )
+    
+        # Angolo di engagement
+        alfa1_i = self.pressureAngle + teethAngles
+    
+        return engagement, alfa1_i
+        
+        
+    def computeStiffnessAngles(self, t, x):
+        """to be updated"""
+        pass
+    
+    def meshStiffness(self, alphai):
+        """to be updated"""
+        pass
+
+    def computeMeshStiffness(self, t, x):
+        """to be updated"""
+        alphai = self.computeStiffnessAngles(t, x)
+        return self.meshStiffness(alphai)
 
     def exampleMeshDamping(self, t, x):
         return 0.005 + 0.002 * np.sin(t)
@@ -74,6 +146,7 @@ class spurGear:
         dofs = ["Xd", "X", "Yd", "Y", "Td", "T"]
         inputs = ["Fx", "Fy", "Tt"]
         return (A, B, dofs, inputs)
+
 
 
 def mainV2():

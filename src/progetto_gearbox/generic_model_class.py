@@ -327,16 +327,26 @@ class GenericModel:
         gear1 = self.gears["gears"][gidx1]
         gear2 = self.gears["gears"][gidx2]
 
+        """Qui devo in qualche modo richiamare le funzioni dinamiche dei gear.
+        Per esempio, se devo calcolare la posizione dei denti di gear 1:
+        >> gear1angle = x[idxPos1, 0]  # estraggo l'angolo di gear1 dallo stato
+        >> gear1teethPos = gear1.TeethPosition(gear1angle)
+        """
+        gear1_angle_idx = self.dofs.index(f"{g1name}:T")
+        gear1_angle = x[gear1_angle_idx, 0]  # estraggo l'angolo di gear1 dallo stato
+        gear1_teeth_pos = gear1.computeTeethPosition(gear1_angle)
+        gear1_engagement = gear1.compute_teeth_engagement(gear1_teeth_pos)
+
         # Normalizza stiffness e damping (possono essere scalari o liste)
         I1 = gear1.inertia["T"]
         I2 = gear2.inertia["T"]
         Rb1 = gear1.radius["base"]
         Rb2 = gear2.radius["base"]
-        km1 = gear1.exampleMeshStiffness(t, x)
-        km2 = gear2.exampleMeshStiffness(t, x)
+        km1 = gear1.exampleMeshStiffness(alpha1i)
+        km2 = gear2.exampleMeshStiffness(alpha2i)
         km = 1 / (1 / km1 + 1 / km2)
-        cm1 = gear1.exampleMeshDamping(t, x)
-        cm2 = gear2.exampleMeshDamping(t, x)
+        cm1 = gear1.exampleMeshDamping(alpha1i)
+        cm2 = gear2.exampleMeshDamping(alpha2i)
         cm = 1 / (1 / cm1 + 1 / cm2)
 
         # ============================================================
@@ -347,10 +357,16 @@ class GenericModel:
 
         idxPos1 = self.dofs.index(f"{g1name}:{dofPos}")
         idxVel1 = self.dofs.index(f"{g1name}:{dofVel}")
+        
+        gear1angle = x[idxPos1, 0]  # estraggo l'angolo di gear1 dallo stato
+        gear1teethPos = gear1.TeethPosition(gear1angle)
 
         idxPos2 = self.dofs.index(f"{g2name}:{dofPos}")
         idxVel2 = self.dofs.index(f"{g2name}:{dofVel}")
 
+        gear2angle = x[idxPos2, 0]  # estraggo l'angolo di gear2 dallo stato
+        gear2teethPos = gear1.TeethPosition(gear2angle)
+        
         # ============================================================
         # 3: Costruzione matrice A(gidx1, gidx2) con coupling mesh
         # ============================================================
