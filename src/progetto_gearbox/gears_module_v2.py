@@ -120,14 +120,50 @@ class spurGear:
         """to be updated"""
         pass
     
-    def meshStiffness(self, alphai):
-        """to be updated"""
-        pass
-
-    def computeMeshStiffness(self, t, x):
-        """to be updated"""
-        alphai = self.computeStiffnessAngles(t, x)
-        return self.meshStiffness(alphai)
+    def meshStiffness(self, engagement, alpha1_i):
+        # Parameters
+        E = self.young
+        L = self.thickness
+        v = self.poisson
+        phig_r = self.compute_phi_angle(self.diameter["root"]) if self.root_greater_than_base else 0.0
+        num_points = 100
+        
+        # Define alfa range
+        start = -alpha1_i
+        stop = phig_r - self.angle_at_base/2
+        alfa = np.linspace(0, 1, num_points)[None, :] * (stop - start)[:, None] + start[:, None]
+        
+        # Compute Ib, Is, Ia
+        Ib = (
+            (
+                3
+                * (1 + np.cos(alpha1_i)[:, None] * ((self.angle_at_base/2 - alfa) * np.sin(alfa) - np.cos(alfa))) ** 2
+                * (self.angle_at_base/2 - alfa)
+                * np.cos(alfa)
+            )
+            / (2 * E * L * (np.sin(alfa) + (self.angle_at_base/2 - alfa) * np.cos(alfa)) ** 3)
+            * engagement[:, None]
+        )
+        Is = (
+            (1.2 * (1 + v) * (self.angle_at_base/2 - alfa) * np.cos(alfa) * np.cos(alpha1_i)[:, None] ** 2)
+            / (E * L * (np.sin(alfa) + (self.angle_at_base/2 - alfa) * np.cos(alfa)))
+            * engagement[:, None]
+        )
+        Ia = (
+            ((self.angle_at_base/2 - alfa) * np.cos(alfa) * np.sin(alpha1_i)[:, None] ** 2)
+            / (2 * E * L * (np.sin(alfa) + (self.angle_at_base/2 - alfa) * np.cos(alfa)))
+            * engagement[:, None]
+        )
+        
+        # Integrate over alfa
+        Kb_inv = np.sum(sc.integrate.trapezoid(Ib, x=alfa, axis=1), axis=0)
+        Ks_inv = np.sum(sc.integrate.trapezoid(Is, x=alfa, axis=1), axis=0)
+        Ka_inv = np.sum(sc.integrate.trapezoid(Ia, x=alfa, axis=1), axis=0)
+        
+        # Total stiffness
+        Kt = 1 / (Kb_inv + Ks_inv + Ka_inv)
+        
+        return Kt
 
     def exampleMeshDamping(self, t, x):
         return 0.005 + 0.002 * np.sin(t)
