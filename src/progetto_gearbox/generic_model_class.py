@@ -178,6 +178,7 @@ class GenericModel:
             "B": [],
             "dofs": [],
             "inputs": [],
+            "initial_conditions": [],
         }
 
         # lista di manager (ConstraintManager) registrati
@@ -205,6 +206,7 @@ class GenericModel:
         self.gears["B"].append(B)
         self.gears["dofs"].append(dofs)
         self.gears["inputs"].append(inputs)
+        self.gears["initial_conditions"].append(gear.initial_conditions)
 
     def addConstraintManager(self, constraintManager):
         """Registra un ConstraintManager nel modello (identificato dal .name)."""
@@ -262,6 +264,8 @@ class GenericModel:
             del self.gears["dofs"][gidx][idx_pos]
             del self.gears["dofs"][gidx][idx_vel]
             del self.gears["inputs"][gidx][idx_inp]
+            del self.gears["initial_conditions"][gidx][idx_pos]
+            del self.gears["initial_conditions"][gidx][idx_vel]
 
     def assembleElasticGroundConnection(self, gear, dofs, stiffness, damping):
         """Applica un vincolo elastico su `gear` per i `dofs` al suolo.
@@ -321,6 +325,8 @@ class GenericModel:
         # 1: Identificazione indici dei due ingranaggi
         # ============================================================
 
+        #gear1 sempre guidante e gear2 guidato, passare stringa a engagement function per segno formule
+        #usare match case al posto di if else con case driving o driven
         gidx1 = self.gears["names"].index(g1name)
         gidx2 = self.gears["names"].index(g2name)
 
@@ -333,21 +339,43 @@ class GenericModel:
         >> gear1teethPos = gear1.TeethPosition(gear1angle)
         """
         gear1_angle_idx = self.dofs.index(f"{g1name}:T")
-        gear1_angle = x[gear1_angle_idx, 0]  # estraggo l'angolo di gear1 dallo stato
+        gear1_omega_idx = self.dofs.index(f"{g1name}:Td")
+        gear1_x_idx = self.dofs.index(f"{g1name}:X") 
+        gear1_y_idx = self.dofs.index(f"{g1name}:Y")
+        gear1_angle = x[gear1_angle_idx, 0] 
+        gear1_omega = x[gear1_omega_idx, 0] 
+        gear1_x = x[gear1_x_idx, 0] 
+        gear1_y = x[gear1_y_idx, 0] 
+        
+        gear2_angle_idx = self.dofs.index(f"{g2name}:T")
+        gear2_omega_idx = self.dofs.index(f"{g2name}:Td")
+        gear2_x_idx = self.dofs.index(f"{g2name}:X") 
+        gear2_y_idx = self.dofs.index(f"{g2name}:Y")
+        gear2_angle = x[gear2_angle_idx, 0]
+        gear2_omega = x[gear2_omega_idx, 0]
+        gear2_x = x[gear2_x_idx, 0] 
+        gear2_y = x[gear2_y_idx, 0] 
+        
+        gamma = np.arctan((gear2_y - gear1_y)/(gear2_x - gear1_x)) # angolo di linea d'azione
         gear1_teeth_pos = gear1.computeTeethPosition(gear1_angle)
-        gear1_engagement = gear1.compute_teeth_engagement(gear1_teeth_pos)
+        gear2_teeth_pos = gear2.computeTeethPosition(gear2_angle)
+        gear1_engagement, gear1_alpha1 = gear1.computeTeethEngagement(gear1_teeth_pos, "driving", gamma, gear1_omega, gear2)
+        gear2_engagement, gear2_alpha2 = gear2.computeTeethEngagement(gear2_teeth_pos, "driven", gamma, gear2_omega, gear1)
+        gear1_mesh_stiffness = gear1.meshStiffness(gear1_engagement, gear1_alpha1)
+        gear2_mesh_stiffness = gear2.meshStiffness(gear2_engagement, gear2_alpha2)
 
         # Normalizza stiffness e damping (possono essere scalari o liste)
         I1 = gear1.inertia["T"]
         I2 = gear2.inertia["T"]
         Rb1 = gear1.radius["base"]
         Rb2 = gear2.radius["base"]
-        km1 = gear1.exampleMeshStiffness(alpha1i)
-        km2 = gear2.exampleMeshStiffness(alpha2i)
-        km = 1 / (1 / km1 + 1 / km2)
-        cm1 = gear1.exampleMeshDamping(alpha1i)
-        cm2 = gear2.exampleMeshDamping(alpha2i)
-        cm = 1 / (1 / cm1 + 1 / cm2)
+        #km1 = gear1.exampleMeshStiffness(alpha1_i)
+        #km2 = gear2.exampleMeshStiffness(alpha2i)
+        #km = 1 / (1 / km1 + 1 / km2)
+        kt = gear1.meshStiffness(gear1_engagement, alpha1)
+        #cm1 = gear1.exampleMeshDamping(t,x)
+        #cm2 = gear2.exampleMeshDamping(t,x)
+        #cm = 1 / (1 / cm1 + 1 / cm2)
 
         # ============================================================
         # 2: Identificazione posizione (indice) del gdl "T" per i due ingranaggi
@@ -374,14 +402,14 @@ class GenericModel:
         # Modifica matrice A di gear1 - coupling con gear2
 
         deltaAc[idxVel1, idxVel1] -= cm * Rb1**2 / I1  # -c/I1 on θ̇1 term
-        deltaAc[idxVel1, idxPos1] -= km * Rb1**2 / I1  # -k/I1 on θ1 term
+        deltaAc[idxVel1, idxPos1] -= kt * Rb1**2 / I1  # -k/I1 on θ1 term
         deltaAc[idxVel1, idxVel2] -= cm * Rb1 * Rb2 / I1  # -c/I1 on θ̇1 term
-        deltaAc[idxVel1, idxPos2] -= km * Rb1 * Rb2 / I1  # -k/I1 on θ1 term
+        deltaAc[idxVel1, idxPos2] -= kt * Rb1 * Rb2 / I1  # -k/I1 on θ1 term
 
         deltaAc[idxVel2, idxVel2] -= cm * Rb2**2 / I2  # -c/I1 on θ̇1 term
-        deltaAc[idxVel2, idxPos2] -= km * Rb2**2 / I2  # -k/I1 on θ1 term
+        deltaAc[idxVel2, idxPos2] -= kt * Rb2**2 / I2  # -k/I1 on θ1 term
         deltaAc[idxVel2, idxVel1] -= cm * Rb1 * Rb2 / I2  # -c/I1 on θ̇1 term
-        deltaAc[idxVel2, idxPos1] -= km * Rb1 * Rb2 / I2  # -k/I1 on θ1 term
+        deltaAc[idxVel2, idxPos1] -= kt * Rb1 * Rb2 / I2  # -k/I1 on θ1 term
         return deltaAc
 
     def assembleRemovedInput(self, gear, inputs):
@@ -481,7 +509,18 @@ class GenericModel:
             self.checkMeshConnection(
                 meshConnection["constrainingGear1"], meshConnection["constrainingGear2"]
             )
+            
+            cgidx1 = self.gears["names"].index(meshConnection["constrainingGear1"])
+            cgidx2 = self.gears["names"].index(meshConnection["constrainingGear2"])
 
+            cgear1 = self.gears["gears"][cgidx1]
+            cgear2 = self.gears["gears"][cgidx2]
+            
+            theta0_2, thetad0_2 = cgear2.derive_initial_conditions(cgear1, gamma)
+            self.gears["initial_conditions"][cgidx2]["T"] = theta0_2
+            self.gears["initial_conditions"][cgidx2]["Td"] = thetad0_2
+            
+            
         for inputFunction in lmanager.inputFunctions:
             for targetInput, targetFunction in inputFunction.items():
                 if targetInput not in self.inputs:
