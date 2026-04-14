@@ -3,49 +3,102 @@
 systems. The module allows to compute the mesh stiffness of meshing gears and to
 assemble them in systems where kinematic and dynamic analysis can be done."""
 
+from progetto_gearbox.interfaces.simulation_interfaces import Model
+from progetto_gearbox.utils.input_functions import sinusoidal, step, ramp
 from progetto_gearbox.utils.angles import wrapToPi
 from numpy import pi
 import numpy as np
 from numpy.typing import NDArray
+from collections.abc import Callable
+from scipy.linalg import block_diag
 # import numpy.typing as npt
 # import matplotlib.pyplot as plt
 # import scipy as sc
+from bokeh.plotting import figure, output_file, show
+from bokeh.models import Div
+from bokeh.layouts import gridplot, column
+ 
 
-
-class SpurGear:
-    def __init__(self, name: str):
+class SpurGear(Model):
+    def __init__(self,
+                 name: str="gear",
+                 input_funcs: dict[str, Callable] = {
+                    "x_pos": step(),
+                    "y_pos": ramp(),
+                    "t_pos": sinusoidal(frequency=2)},
+                 init_conditions_dict: dict[str, float] = {},
+                 inertia_x: float = 1,
+                 inertia_y: float = 1, 
+                 inertia_t: float = 1,
+                 module: float = 10,
+                 teeth_number: int = 20,
+                 pressure_angle: float = 20,
+                 thickness: float = 10,
+                 young: float = 200000,
+                 poisson: float = 0.3
+                ):
         self.name = name
+        self.init_linear_model()
+        self.get_state_space(inertia_x, inertia_y, inertia_t)
+        self.input_funcs = input_funcs
+        self.set_initial_conditions(init_conditions_dict=init_conditions_dict)
+        self.set_geometry(module, teeth_number, pressure_angle, thickness)
+        self.set_material(young, poisson)
+        self.get_diameters_and_radiuses()
+        self.get_alpha_angles()
 
-    def compute_diameters_and_radiuses(self):
-        pitch_diameter = self.teethNumber * self.module
+
+    def get_state_space(self, inertia_x: float, inertia_y: float, inertia_t: float):
+        self.state_names = ["x_pos", "x_vel", "y_pos", "y_vel", "t_pos", "t_vel"]
+        self.state_uoms = ["m", "m/s", "m", "m/s", "rad", "rad/s"]
+        
+        self.input_names = ["x_force","y_force","t_torque"]
+        self.input_uoms = ["N","N","Nm"]
+
+        self.output_names = ["x_pos", "x_vel", "y_pos", "y_vel", "t_pos", "t_vel"]
+        self.output_uoms = ["m", "m/s", "m", "m/s", "rad", "rad/s"]
+
+        self.get_matrices_dimensions()
+
+        self.state_transition_matrix = block_diag(*[np.array([[0, 0],[1, 0]])]*3)
+
+        self.input_matrix = block_diag(
+            *[np.array([[0],[1 / inertia_x]]),
+              np.array([[0],[1 / inertia_y]]),
+              np.array([[0],[1 / inertia_t]])])
+        
+        self.output_matrix = np.eye(self.no, self.ns)
+        self.feedthrough_matrix = np.zeros((self.no, self.ni))
+
+        self.check_matrices_dimensions()
+
+    def set_geometry(self, module: float, teeth_number: int, pressure_angle: float, thickness: float):
+        self.module = module
+        self.teeth_number = teeth_number
+        self.pressure_angle = pressure_angle
+        self.thickness = thickness
+    
+    def set_material(self, young: float, poisson: float):
+        self.young = young
+        self.poisson = poisson
+
+    def get_diameters_and_radiuses(self): 
+        pitch_diameter = self.teeth_number * self.module
         self.diameters = {
             "pitch": pitch_diameter,
-            "base": pitch_diameter * np.cos(self.pressureAngle),
+            "base": pitch_diameter * np.cos(self.pressure_angle),
             "addendum": pitch_diameter + 2 * self.module,
             "dedendum": pitch_diameter - 2 * self.module,
             "root": pitch_diameter - 2.5 * self.module,
         }
         self.root_greater_than_base = self.diameters["root"] > self.diameters["base"]
-        self.radius = {key: value / 2 for key, value in self.diameters.items()}
-        
-
-    def compute_phi_angle(self, diameter: float | NDArray) -> float | NDArray:
-        return np.sqrt(diameter**2 / self.diameters["base"] ** 2 - 1)
-
-    def compute_csi_angle(self, diameter: float | NDArray) -> float | NDArray:
-        return np.arcsin(
-            self.compute_phi_angle(diameter)
-            / np.sqrt(1 + self.compute_phi_angle(diameter) ** 2)
-        )
+        self.radiuses = {name: diameter / 2 for name, diameter in self.diameters.items()}
     
-    def compute_psi_angle(self, diameter: float | NDArray) -> float | NDArray:
-        return self.compute_phi_angle(diameter) - self.compute_csi_angle(diameter)
-
-    def compute_alpha_angle(self):
+    def get_alpha_angles(self): 
         alpha2 = (
-            pi / (2 * self.teethNumber)
-            + np.tan(self.pressureAngle)
-            - self.pressureAngle
+            pi / (2 * self.teeth_number)
+            + np.tan(self.pressure_angle)
+            - self.pressure_angle
         )
         if self.root_greater_than_base:
             self.alpha = {
@@ -61,143 +114,152 @@ class SpurGear:
                 ),
             }
             self.angle_at_base = 2 * alpha2
+    
+    
+    
+    
+    
+    def compute_phi_angle(self, diameter: float | NDArray) -> float | NDArray:
+        return np.sqrt(diameter**2 / self.diameters["base"] ** 2 - 1)
 
-    def assign_geometry(
-        self, module: float, teethNumber: int, pressureAngle: float, thickness: float
-    ):
-        self.module = module
-        self.teethNumber = teethNumber
-        self.pressureAngle = pressureAngle
-        self.thickness = thickness
-        self.compute_diameters_and_radiuses()
-        self.compute_alpha_angle()
+    def compute_csi_angle(self, diameter: float | NDArray) -> float | NDArray:
+        return np.arcsin(
+            self.compute_phi_angle(diameter)
+            / np.sqrt(1 + self.compute_phi_angle(diameter) ** 2)
+        )
+    
+    def compute_psi_angle(self, diameter: float | NDArray) -> float | NDArray:
+        return self.compute_phi_angle(diameter) - self.compute_csi_angle(diameter)
 
-    def assign_material(self, young: float, poisson: float):
-        self.young = young
-        self.poisson = poisson
+    def get_plot_figure(self, fig: figure | None = None) -> figure:
+        if not fig:
+            output_file(f"plots/gear_{self.name}_plot.html")
+            fig = figure(match_aspect=True)
+        return fig
+
+    def compute_teeth_position(self, gear_angle: float | NDArray) -> NDArray:
+        pitch_angle = 2 * pi / self.teeth_number
+        pitch_angle_vector = np.arange(self.teeth_number) * pitch_angle
+        return wrapToPi(gear_angle + pitch_angle_vector)
+    
+    def plot_teeth_root(self, fig: figure | None = None, centre_x: float = 0, centre_y: float = 0, hide: bool = True) -> figure.circle:
+        fig = self.get_plot_figure(fig)
+        return {"root": fig.circle(
+                x=centre_x,
+                y=centre_y,
+                radius=self.radiuses["root"],
+                line_color="black",
+                fill_color="gray",
+                fill_alpha=0.5,
+                line_width=1
+            )}
+
+    def plot_reference_circles(self, fig: figure | None = None, centre_x: float = 0, centre_y: float = 0, hide: bool = True) -> dict[str, figure.circle]:
+        return {radius_name: fig.circle(
+                x=centre_x,
+                y=centre_y,
+                radius=radius,
+                line_color="black",
+                fill_color=None,
+                line_width=0.5,
+                line_dash="dashed"
+            ) for radius_name, radius in self.radiuses.items() if radius_name != "root"}
+
+    def plot(self, fig: figure | None = None, centre_x: float = 0, centre_y: float = 0, theta: float = 0, engaged_teeth: NDArray[np.bool] | None = None):
+        fig = self.get_plot_figure(fig)
+        self.plot_teeth_root(fig, centre_x, centre_y)
+        # self.plot_teeth_profiles(fig, centre_x, centre_y, theta, engaged_teeth)
+        # self.plot_teeth_edges(fig, centre_x, centre_y, theta, engaged_teeth)
+        self.plot_reference_circles(fig, centre_x, centre_y)
+        show(fig)
+        
+        
 
 
+    
 
 
-    def add_initial_conditions(self, init_condit: list[float]):
-        self.initial_conditions = init_condit
-
-    def derive_initial_conditions(
-        self, driving_gear: "SpurGear", gamma: float, ii: int = 0, jj: int = 0
-    ):
+    def set_initial_conditions_from(self, driving_gear: "SpurGear", gamma: float, ii: int = 0, jj: int = 0): 
         theta0 = (
             pi
-            - (driving_gear.teethNumber / self.teethNumber)
+            - (driving_gear.teeth_number / self.teeth_number)
             * driving_gear.initial_conditions[4]
-            + (driving_gear.teethNumber / self.teethNumber + 1) * gamma
-            - (pi / 2 / self.teethNumber) * (4 * ii + 4 * jj - 6)
+            + (driving_gear.teeth_number / self.teeth_number + 1) * gamma
+            - (pi / 2 / self.teeth_number) * (4 * ii + 4 * jj - 6)
         )
         thetad0 = (
             -driving_gear.initial_conditions[5]
-            * driving_gear.teethNumber
-            / self.teethNumber
+            * driving_gear.teeth_number
+            / self.teeth_number
         )
         return theta0, thetad0
 
-    def assign_dynamics(self, massX: float, massY: float, inertiaT: float):
-        self.inertia = {"X": massX, "Y": massY, "T": inertiaT}
+    def compute_teeth_engagement(self, teeth_position, mode, gamma, gear_rotation, other_gear): ### fix
+        pass
+        # csi_a2 = other_gear.compute_csi_angle(other_gear.diameter["addendum"])
+        # a0 = self.radius["pitch"] + other_gear.radius["pitch"]
+        # ro2 = np.sqrt(
+        #     other_gear.radius["addendum"] ** 2
+        #     + a0**2
+        #     - 2
+        #     * other_gear.radius["addendum"]
+        #     * a0
+        #     * np.cos(csi_a2 - self.pressureAngle)
+        # )
+        # phi_2 = self.compute_phi_angle(2 * ro2)
+        # phi_a = self.compute_phi_angle(self.diameter["addendum"])
 
-    def computeTeethPosition(self, gearAngle: float):
-        pitch_angle = 2 * pi / self.teethNumber
-        pitch_angle_vector = np.arange(self.teethNumber) * pitch_angle
-        return wrapToPi(gearAngle + pitch_angle_vector)
+        # match (mode, gear_rotation):
+        #     case ("driving", gr) if gr > 0:  #
+        #         thetagi = wrapToPi(teethPosition - gamma)
+        #         theta_start = wrapToPi(
+        #             +(-self.pressureAngle + phi_2 - self.angle_at_base / 2)
+        #         )
+        #         theta_end = wrapToPi(
+        #             +(-self.pressureAngle + phi_a - self.angle_at_base / 2)
+        #         )
+        #     case ("driving", gr) if gr < 0:
+        #         thetagi = wrapToPi(teethPosition - gamma)
+        #         theta_start = wrapToPi(
+        #             -(-self.pressureAngle + phi_2 - self.angle_at_base / 2)
+        #         )
+        #         theta_end = wrapToPi(
+        #             -(-self.pressureAngle + phi_a - self.angle_at_base / 2)
+        #         )
+        #     case ("driven", gr) if gr > 0:
+        #         thetagi = wrapToPi(teethPosition - gamma - pi)
+        #         theta_start = wrapToPi(
+        #             -(self.pressureAngle - phi_a - self.angle_at_base / 2)
+        #         )
+        #         theta_end = wrapToPi(
+        #             -(self.pressureAngle - phi_2 - self.angle_at_base / 2)
+        #         )
+        #     case ("driven", gr) if gr < 0:  #
+        #         thetagi = wrapToPi(teethPosition - gamma - pi)
+        #         theta_start = wrapToPi(
+        #             +(self.pressureAngle - phi_a - self.angle_at_base / 2)
+        #         )
+        #         theta_end = wrapToPi(
+        #             +(self.pressureAngle - phi_2 - self.angle_at_base / 2)
+        #         )
 
-    # def computeTeethEngagement(self, teethPosition, other_Gear):
+        # # --- 6) Condizione di ingaggio corretta ---
 
-    #     phig_a = self.compute_phi_angle(self.diameter["addendum"])
-    #     phig_r = #calcolato sulla base dell'addendu dell'altro gear
-    #     self.compute_phi_angle(self.diameter["root"]) if self.root_greater_than_base else 0
+        # engagement = np.logical_and(thetagi >= theta_start, thetagi < theta_end)
 
-    #     # Calcola thetagi
-    #     thetagi = wrap_to_pi(teethPosition + self.angle_at_base/2)
+        # if not np.any(engagement):
+        #     print("No engagement detected.")
 
-    #     # Condizione di engagement
-    #     engagement = np.logical_and(
-    #         #phistart
-    #         thetagi >= -self.pressureAngle + phig_r,
-    #         #phiexit
-    #         thetagi < - self.pressureAngle + phig_a
-    #     )
-    #     if all(engagement == 0):
-    #         print("No engagement detected.")
-    #     # Angolo di engagement
-    #     alfa1_i = self.pressureAngle + teethPosition
+        # # Angolo utile per cinematica
+        # alfa1_i = -self.pressureAngle + thetagi
 
-    #     return engagement, alfa1_i
+        # return engagement, alfa1_i
 
-    def computeTeethEngagement(
-        self, teethPosition, mode, gamma, gear_rotation, other_gear
-    ):
-
-        csi_a2 = other_gear.compute_csi_angle(other_gear.diameter["addendum"])
-        a0 = self.radius["pitch"] + other_gear.radius["pitch"]
-        ro2 = np.sqrt(
-            other_gear.radius["addendum"] ** 2
-            + a0**2
-            - 2
-            * other_gear.radius["addendum"]
-            * a0
-            * np.cos(csi_a2 - self.pressureAngle)
-        )
-        phi_2 = self.compute_phi_angle(2 * ro2)
-        phi_a = self.compute_phi_angle(self.diameter["addendum"])
-
-        match (mode, gear_rotation):
-            case ("driving", gr) if gr > 0:  #
-                thetagi = wrapToPi(teethPosition - gamma)
-                theta_start = wrapToPi(
-                    +(-self.pressureAngle + phi_2 - self.angle_at_base / 2)
-                )
-                theta_end = wrapToPi(
-                    +(-self.pressureAngle + phi_a - self.angle_at_base / 2)
-                )
-            case ("driving", gr) if gr < 0:
-                thetagi = wrapToPi(teethPosition - gamma)
-                theta_start = wrapToPi(
-                    -(-self.pressureAngle + phi_2 - self.angle_at_base / 2)
-                )
-                theta_end = wrapToPi(
-                    -(-self.pressureAngle + phi_a - self.angle_at_base / 2)
-                )
-            case ("driven", gr) if gr > 0:
-                thetagi = wrapToPi(teethPosition - gamma - pi)
-                theta_start = wrapToPi(
-                    -(self.pressureAngle - phi_a - self.angle_at_base / 2)
-                )
-                theta_end = wrapToPi(
-                    -(self.pressureAngle - phi_2 - self.angle_at_base / 2)
-                )
-            case ("driven", gr) if gr < 0:  #
-                thetagi = wrapToPi(teethPosition - gamma - pi)
-                theta_start = wrapToPi(
-                    +(self.pressureAngle - phi_a - self.angle_at_base / 2)
-                )
-                theta_end = wrapToPi(
-                    +(self.pressureAngle - phi_2 - self.angle_at_base / 2)
-                )
-
-        # --- 6) Condizione di ingaggio corretta ---
-
-        engagement = np.logical_and(thetagi >= theta_start, thetagi < theta_end)
-
-        if not np.any(engagement):
-            print("No engagement detected.")
-
-        # Angolo utile per cinematica
-        alfa1_i = -self.pressureAngle + thetagi
-
-        return engagement, alfa1_i
-
-    def computeStiffnessAngles(self, t, x):
+    def computeStiffnessAngles(self, t, x): ### fix
         """to be updated"""
         pass
 
-    def meshStiffness(self, engagement, alpha1):
+    def meshStiffness(self, engagement, alpha1): ### fix
         # Parameters
         E = self.young
         L = self.thickness
@@ -360,650 +422,651 @@ class SpurGear:
             )
 
         # Integrate over alfa
-        Kb_inv = np.sum(sc.integrate.trapezoid(Ib, x=alpha, axis=0))
-        Ks_inv = np.sum(sc.integrate.trapezoid(Is, x=alpha, axis=0))
-        Ka_inv = np.sum(sc.integrate.trapezoid(Ia, x=alpha, axis=0))
+        # Kb_inv = np.sum(sc.integrate.trapezoid(Ib, x=alpha, axis=0))
+        # Ks_inv = np.sum(sc.integrate.trapezoid(Is, x=alpha, axis=0))
+        # Ka_inv = np.sum(sc.integrate.trapezoid(Ia, x=alpha, axis=0))
 
-        if self.root_greater_than_base:
-            kb_inv += Ib0
-            ks_inv += Is0
-            ka_inv += Ia0
+        # if self.root_greater_than_base:
+        #     kb_inv += Ib0
+        #     ks_inv += Is0
+        #     ka_inv += Ia0
 
-        # Total stiffness
-        Kt = 1 / (Kb_inv + Ks_inv + Ka_inv)
-        if all(engagement == 0):
-            print("No engagement detected.")
-        return Kt
+        # # Total stiffness
+        # Kt = 1 / (Kb_inv + Ks_inv + Ka_inv)
+        # if all(engagement == 0):
+        #     print("No engagement detected.")
+        # return Kt
 
-    def exampleMeshDamping(self, t, x):
+    def exampleMeshDamping(self, t, x): ### fix
         return 0.005 + 0.002 * np.sin(t)
 
-    def stateSpace(self):
-        A = np.zeros((6, 6))
-        A[1, 0] = 1
-        A[3, 2] = 1
-        A[5, 4] = 1
-
-        B = np.zeros((6, 3))
-        B[0, 0] = 1 / self.inertia["X"]
-        B[2, 1] = 1 / self.inertia["Y"]
-        B[4, 2] = 1 / self.inertia["T"]
-
-        dofs = ["Xd", "X", "Yd", "Y", "Td", "T"]
-        inputs = ["Fx", "Fy", "Tt"]
-        return (A, B, dofs, inputs)
-
-
-def mainV2():
-    gear = spurGear(name="gearProva")
-    gear.assignGeometricalProperties(
-        module=3.2,
-        teethNumber=31,
-        pressureAngle=20 * pi / 180,
-        thickness=0.0381 * 1e3,
-    )
-    gear.assignMaterialProperties(young=2.068 * 1e5, poisson=0.3)
-    gear.assignDynamicProperties(massX=1, massY=1, inertiaT=0.5)
-    gear.stateSpace()
-    print("object created")
-
-
-class spurGearOld:
-
-    def __init__(
-        self,
-        name: str,
-        module: float,
-        teeth_number: int,
-        pressure_angle: float,
-        thickness: float,
-        young: float,
-        poisson: float,
-        rotation_direction: str,
-    ):
-        """
-        spurGearOld.__init__(...)
-
-        Creates a driving spurGearOld object.
-
-        Parameters
-        ----------
-        name : str
-            Name of the gear
-        module : float
-            module of the gear in mm
-        teetnumber : int
-            number of teeth of the gear
-        root_diameter : float
-            root_diameter of the gear in mm
-        pressure_angle : float
-            pressure angle of the gear in rad
-
-        Returns
-        -------
-        out: spurGearOld
-            A spurGearOld object satisfying the specified requirements
-        """
-        self.name = name
-        self.module = module
-        self.teeth_number = teeth_number
-        self.pressure_angle = pressure_angle
-        self.thickness = thickness
-        self.young = young
-        self.poisson = poisson
-        self.rotation_direction = rotation_direction
-        self.compute_diameters()
-        self.compute_radiuses()
-        self.compute_alpha_angle()
-        self.mode = "driving"
-        self.initial_phase = 0
-
-    # https://realpython.com/python-multiple-constructors/
-    @classmethod
-    def from_module_pitchdiameter(
-        cls,
-        name: str,
-        module: float,
-        pitch_diameter: float,
-        pressure_angle: float,
-        thickness: float,
-        young: float,
-        poisson: float,
-        rotation_direction: str,
-    ):
-        """
-        spurGearOld.__init__(...)
-
-        Creates a driving spurGearOld object.
-
-        Parameters
-        ----------
-        name : str
-            Name of the gear
-        module : float
-            module of the gear in mm
-        pitch_diameter : float
-            ptich_diamater of the gear in mm
-        root_diameter : float
-            root_diameter of the gear in mm
-        pressure_angle : float
-            pressure angle of the gear in deg
-
-        Returns
-        -------
-        out: spurGearOld
-            A spurGearOld object satisfying the specified requirements
-        """
-        teeth_number = int(pitch_diameter / module)
-        return cls(
-            name,
-            module,
-            teeth_number,
-            pressure_angle,
-            thickness,
-            young,
-            poisson,
-            rotation_direction,
-        )
-
-    @classmethod
-    def from_teethnumber_pitchdiamter(
-        cls,
-        name: str,
-        teeth_number: int,
-        pitch_diameter: float,
-        pressure_angle: float,
-        thickness: float,
-        young: float,
-        poisson: float,
-        rotation_direction: str,
-    ):
-        """
-        spurGearOld.__init__(...)
-
-        Creates a driving spurGearOld object.
-
-        Parameters
-        ----------
-        name : str
-            Name of the gear
-        module : float
-            module of the gear in mm
-        pitch_diameter : float
-            ptich_diamater of the gear in mm
-        root_diameter : float
-            root_diameter of the gear in mm
-        pressure_angle : float
-            pressure angle of the gear in deg
-
-        Returns
-        -------
-        out: spurGearOld
-            A spurGearOld object satisfying the specified requirements
-        """
-        module = pitch_diameter / teeth_number
-        return cls(
-            name,
-            module,
-            teeth_number,
-            pressure_angle,
-            thickness,
-            young,
-            poisson,
-            rotation_direction,
-        )
-
-    @classmethod
-    def driven_gear(
-        cls,
-        name: str,
-        teeth_number: int,
-        thickness: float,
-        young: float,
-        poisson: float,
-        other: "spurGearOld",
-    ):
-        if other.rotation_direction == "clockwise":
-            rotation_direction = "counterclockwise"
-        else:
-            rotation_direction = "clockwise"
-
-        self = cls(
-            name,
-            other.module,
-            teeth_number,
-            other.pressure_angle,
-            thickness,
-            young,
-            poisson,
-            rotation_direction,
-        )
-        self.mode = "driven"
-        return self
-
-    def assign_dynamic_properties(self, inertia):
-        self.inertia = inertia
-
-    def compute_diameters(self):
-        pitch_diameter = self.teeth_number * self.module
-        self.diameter = {
-            "pitch": pitch_diameter,
-            "base": pitch_diameter * np.cos(self.pressure_angle),
-            "addendum": pitch_diameter + 2 * self.module,
-            "dedendum": pitch_diameter - 2 * self.module,
-            "root": pitch_diameter - 2.5 * self.module,
-        }
-        self.root_greater_than_base = self.diameter["root"] > self.diameter["base"]
-
-    def compute_radiuses(self):
-        self.radius = {key: value / 2 for key, value in self.diameter.items()}
-
-    def compute_phi_angle(self, diameter: float) -> float:
-        return np.sqrt(diameter**2 / self.diameter["base"] ** 2 - 1)
-
-    def compute_csi_angle(self, diameter: float) -> float:
-        return np.arcsin(
-            self.compute_phi_angle(diameter)
-            / np.sqrt(1 + self.compute_phi_angle(diameter) ** 2)
-        )
-
-    def compute_psi_angle(self, diameter: float) -> float:
-        return self.compute_phi_angle(diameter) - self.compute_csi_angle(diameter)
-
-    def compute_alpha_angle(self):
-        alpha2 = (
-            pi / (2 * self.teeth_number)
-            + np.tan(self.pressure_angle)
-            - self.pressure_angle
-        )
-        if self.root_greater_than_base:
-            self.alpha = {
-                2: alpha2,
-                4: alpha2 - self.compute_psi_angle(self.diameter["root"]),
-                5: self.compute_phi_angle(self.diameter["root"]) - alpha2,
-            }
-        else:
-            self.alpha = {
-                2: alpha2,
-                3: np.arcsin(
-                    self.radius["base"] / self.radius["root"] * np.sin(alpha2)
-                ),
-            }
-            self.angle_at_base = 2 * alpha2
-
-    def compute_circles(self, centre_position: tuple[float, float] = (0, 0)) -> dict:
-        circles = {
-            radius_name: plt.Circle(
-                centre_position,
-                radius,
-                edgecolor="k",
-                facecolor="none",
-                linewidth=0.5,
-                linestyle="dashed",
-            )
-            for radius_name, radius in self.radius.items()
-        }
-        return circles
-
-    def compute_involute(
-        self, clockwise: bool = True, npoints: int = 150
-    ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
-        if self.root_greater_than_base:
-            diameters = np.linspace(
-                self.diameter["root"], self.diameter["addendum"], npoints
-            )
-        else:
-            diameters = np.linspace(
-                self.diameter["base"], self.diameter["addendum"], npoints
-            )
-
-        diameters = diameters[:, np.newaxis]
-        radiuses = diameters / 2
-        angles = self.compute_psi_angle(diameters) - self.angle_at_base / 2
-
-        if clockwise:
-            angles = -angles
-
-        return (radiuses, angles)
-
-    def compute_all_involutes(self, phase: float = 0):
-        teeth_angles = np.linspace(
-            0, 2 * pi, self.teeth_number, endpoint=False
-        ).reshape(1, -1)
-        teeth_angles += self.initial_phase + phase
-        radiuses_cw, angles_cw = self.compute_involute()
-        radiuses_ccw, angles_ccw = self.compute_involute(clockwise=False)
-        angles_cw = angles_cw + teeth_angles
-        angles_ccw = angles_ccw + teeth_angles
-        radiuses = np.concatenate(
-            [radiuses_cw] * self.teeth_number + [radiuses_ccw] * self.teeth_number,
-            axis=1,
-        )
-        angles = np.concatenate((angles_cw, angles_ccw), axis=1)
-        return (radiuses, angles)
-
-    def compute_ext_lines(
-        self, involute_angles: npt.NDArray[np.float64]
-    ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
-        ext_line_radiuses = self.radius["addendum"]
-        ext_line_angles = np.linspace(
-            involute_angles[-1, : self.teeth_number],
-            involute_angles[-1, self.teeth_number :],
-            5,
-        )
-        return (ext_line_radiuses, ext_line_angles)
-
-    def compute_rad_lines(
-        self, involute_angles: npt.NDArray[np.float64]
-    ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
-        rad_line_angles = involute_angles[0, :].reshape(1, -1)
-        rad_line_radiuses = np.array([[self.radius["root"]], [self.radius["base"]]])
-        return (rad_line_radiuses, rad_line_angles)
-
-    def compute_str_lines(
-        self, involute_angles: npt.NDArray[np.float64]
-    ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
-        str_line_radiuses = np.array([[self.radius["root"]], [self.radius["base"]]])
-        deltas = np.concatenate(
-            [np.ones([1, self.teeth_number]), -np.ones([1, self.teeth_number])], axis=1
-        ) * (
-            np.arcsin(
-                self.radius["base"]
-                / self.radius["root"]
-                * np.sin(self.angle_at_base / 2)
-            )
-            - self.angle_at_base / 2
-        )
-
-        str_line_angles = np.concatenate(
-            [
-                involute_angles[0, :].reshape(1, -1) + deltas,
-                involute_angles[0, :].reshape(1, -1),
-            ],
-            axis=0,
-        )
-        return (str_line_radiuses, str_line_angles)
-
-    def compute_int_lines(
-        self, angles: npt.NDArray[np.float64]
-    ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
-        int_line_radiuses = self.radius["root"]
-        int_line_angle_starts = angles[0, : self.teeth_number]
-        int_line_angle_ends = np.roll(angles[0, self.teeth_number :], -1)
-        int_line_angle_ends[-1] += 2 * pi
-        int_line_angles = np.linspace(int_line_angle_starts, int_line_angle_ends, 5)
-        return (int_line_radiuses, int_line_angles)
-
-    def compute_teeth_angles(
-        self,
-        initial_phase: float,
-        speed: float,
-        simulation_time_vector: npt.NDArray[np.float64],
-    ) -> npt.NDArray[np.float64]:
-        simulation_time_vector = np.reshape(simulation_time_vector, (-1, 1))
-        teeth_shift = np.arange(self.teeth_number) * 2 * pi / self.teeth_number
-        teeth_shift = np.reshape(teeth_shift, (1, -1))
-        theta = initial_phase + speed * simulation_time_vector + teeth_shift
-        return wrapTo2Pi(theta)
-
-    def compute_engagement(
-        self,
-        teeth_angles: npt.NDArray[np.float64],
-        relative_angle: float,
-        other: "spurGearOld",
-    ) -> npt.NDArray[np.float64]:
-        match self.mode:
-            case "driving":
-                if self.rotation_direction == "clockwise":
-                    alpha1 = relative_angle + self.pressure_angle - teeth_angles
-                else:
-                    alpha1 = relative_angle - self.pressure_angle + teeth_angles
-            case "driven":
-                if self.rotation_direction == "clockwise":
-                    alpha1 = relative_angle - self.pressure_angle + teeth_angles - pi
-                else:
-                    alpha1 = relative_angle + self.pressure_angle - teeth_angles + pi
-        return wrapToPi(alpha1)
-
-    def compute_alpha1(
-        self, teeth_angles: npt.NDArray[np.float64], relative_angle: float
-    ) -> npt.NDArray[np.float64]:
-        match self.mode:
-            case "driving":
-                if self.rotation_direction == "clockwise":
-                    alpha1 = relative_angle + self.pressure_angle - teeth_angles
-                else:
-                    alpha1 = relative_angle - self.pressure_angle + teeth_angles
-            case "driven":
-                if self.rotation_direction == "clockwise":
-                    alpha1 = relative_angle - self.pressure_angle + teeth_angles - pi
-                else:
-                    alpha1 = relative_angle + self.pressure_angle - teeth_angles + pi
-        return wrapToPi(alpha1)
-
-    def compute_mesh_stiffness(self, alpha1: float, npoints: int = 100) -> float:
-        if self.root_greater_than_base:
-            alpha = np.linspace(-alpha1, self.alpha[5], npoints)
-            kbinv = (
-                3
-                * (
-                    1
-                    + np.cos(alpha1)
-                    * ((self.alpha[2] - alpha) * np.sin(alpha) - np.cos(alpha))
-                )
-                ** 2
-                * (self.alpha[2] - alpha)
-                * np.cos(alpha)
-                / (
-                    2
-                    * self.young
-                    * self.thickness
-                    * (np.sin(alpha) + (self.alpha[2] - alpha) * np.cos(alpha)) ** 3
-                )
-            )
-            kbinv = sc.integrate.trapezoid(kbinv, x=alpha, axis=0)
-        else:
-            pass
-
-        khinv = 4 * (1 - self.poisson**2) / (pi * self.young * self.thickness)
-        return kbinv
-
-    def example_mesh_stiffness(self, t):
-        return 10 + np.sin(t)
-
-    def example_mesh_damping(self, t):
-        return 0.5 + 0.1 * np.sin(t)
-
-    def plot(
-        self,
-        ax: plt.Axes,
-        centre_position: tuple[float, float] = (0, 0),
-        phase: float = 0,
-    ):
-        circles = self.compute_circles(centre_position=centre_position)
-        for circle in circles.values():
-            ax.add_artist(circle)
-
-        involute_radiuses, involute_angles = self.compute_all_involutes(phase=phase)
-        ext_line_radiuses, ext_line_angles = self.compute_ext_lines(involute_angles)
-        if self.root_greater_than_base:
-            int_line_radiuses, int_line_angles = self.compute_int_lines(involute_angles)
-        else:
-            # rad_line_radiuses, rad_line_angles = self.compute_rad_lines(
-            #     involute_angles)
-            str_line_radiuses, str_line_angles = self.compute_str_lines(involute_angles)
-            int_line_radiuses, int_line_angles = self.compute_int_lines(str_line_angles)
-            # int_line_radiuses, int_line_angles = self.compute_int_lines(
-            #     rad_line_angles)
-
-        invoultes = ax.plot(
-            involute_radiuses * np.cos(involute_angles),
-            involute_radiuses * np.sin(involute_angles),
-            "k",
-        )
-        int_lines = ax.plot(
-            int_line_radiuses * np.cos(int_line_angles),
-            int_line_radiuses * np.sin(int_line_angles),
-            "k",
-        )
-        ext_lines = ax.plot(
-            ext_line_radiuses * np.cos(ext_line_angles),
-            ext_line_radiuses * np.sin(ext_line_angles),
-            "k",
-        )
-        if not (self.root_greater_than_base):
-            # rad_lines = ax.plot(rad_line_radiuses*np.cos(rad_line_angles),
-            #                     rad_line_radiuses*np.sin(rad_line_angles), 'k')
-            str_lines = ax.plot(
-                str_line_radiuses * np.cos(str_line_angles),
-                str_line_radiuses * np.sin(str_line_angles),
-                "k",
-            )
-
-    def draw_circles(self, ax: plt.Axes):
-        circles_dict = self.compute_circles()
-        handles = {
-            "circles": [ax.add_artist(circle) for circle in circles_dict.values()]
-        }
-        return handles
-
-    def draw_gear(self, ax: plt.Axes, phase: float = 0, mode: str = "straight"):
-        involute_radiuses, involute_angles = self.compute_all_involutes(phase=phase)
-        handles = {
-            "involutes": ax.plot(
-                involute_radiuses * np.cos(involute_angles),
-                involute_radiuses * np.sin(involute_angles),
-                "k",
-            )
-        }
-
-        ext_line_radiuses, ext_line_angles = self.compute_ext_lines(involute_angles)
-        handles["ext_lines"] = ax.plot(
-            ext_line_radiuses * np.cos(ext_line_angles),
-            ext_line_radiuses * np.sin(ext_line_angles),
-            "k",
-        )
-
-        if not (self.root_greater_than_base):
-            match mode:
-                case "straight":
-                    str_line_radiuses, str_line_angles = self.compute_str_lines(
-                        involute_angles
-                    )
-                    handles["str_lines"] = ax.plot(
-                        str_line_radiuses * np.cos(str_line_angles),
-                        str_line_radiuses * np.sin(str_line_angles),
-                        "k",
-                    )
-                    int_line_radiuses, int_line_angles = self.compute_int_lines(
-                        str_line_angles
-                    )
-                case "radial":
-                    rad_line_radiuses, rad_line_angles = self.compute_rad_lines(
-                        involute_angles
-                    )
-                    rad_lines = ax.plot(
-                        rad_line_radiuses * np.cos(rad_line_angles),
-                        rad_line_radiuses * np.sin(rad_line_angles),
-                        "k",
-                    )
-                    int_line_radiuses, int_line_angles = self.compute_int_lines(
-                        rad_line_angles
-                    )
-                case _:
-                    raise Exception("mode must be one of 'straight' and 'radial'")
-        else:
-            int_line_radiuses, int_line_angles = self.compute_int_lines(involute_angles)
-
-            handles["int_lines"] = ax.plot(
-                int_line_radiuses * np.cos(int_line_angles),
-                int_line_radiuses * np.sin(int_line_angles),
-                "k",
-            )
-        return handles
-
-    def animate(self, ax: plt.Axes):
-        handles = self.draw_circles(ax)
-        handles.update(self.draw_gear(ax))
-
-    def __repr__(self):
-        return f"""Generated by spurGearOld(name = "{self.name}",
-            module = {self.module},
-            teeth_number = {self.teeth_number},
-            pressure_angle = {self.pressure_angle},
-            thickness = {self.thickness},
-            young = {self.young},
-            poisson = {self.poisson})
-            """
-
-    def __str__(self):
-        return f"""object of type spurGearOld, with:
-            name: {self.name}
-            module: {self.module}
-            number of teeth: {self.teeth_number}
-            diameters: {self.diameter}
-            pressure angle: {self.pressure_angle}
-            thickness: {self.thickness}
-            young's modulus: {self.young}
-            poisson: {self.poisson}"""
-
-
-def main():
-    pinion = spurGearOld(
-        name="driving_gear",
-        module=3.2,
-        teeth_number=31,
-        pressure_angle=20 * pi / 180,
-        thickness=0.0381 * 1e3,
-        young=2.068 * 1e5,
-        poisson=0.3,
-        rotation_direction="counterclockwise",
-    )
-
-    gear = spurGearOld.driven_gear(
-        name="driven_gear",
-        teeth_number=19,
-        thickness=0.0381 * 1e3,
-        young=2.068 * 1e5,
-        poisson=0.3,
-        other=pinion,
-    )
-
-    ring = spurGearOld.driven_gear(
-        name="driven_gear",
-        teeth_number=81,
-        thickness=0.0381 * 1e3,
-        young=2.068 * 1e5,
-        poisson=0.3,
-        other=gear,
-    )
-
-    print(gear)
-    print(pinion)
-    print(
-        "\n\nI should include the dynamic variables (centre position, gear angle, revolution speed) missing. Fix 'compute_engagements' and missing mesh stiffnesses\n\n"
-    )
-
-    # c.compute_mesh_stiffness(pi/4)
-
-    fig, ax = plt.subplots(1, 1)
-    ax.set_aspect("equal")
-    pinion.plot(ax, phase=0)
-    # a.animate(ax)
-    plt.show()
-
-    # Debug mesh stiffness
-    # gear_speed = 60  # rpm
-    # period = 60/gear_speed  # s
-    # dt = 0.0001
-    # time = np.arange(dt, period, dt)
-    # theta = gear.compute_teeth_angles(0, gear_speed, time)
-    # alpha1 = gear.compute_alpha1(theta, 0)
-
-    # fig, ax = plt.subplots(1, 1)
-    # ax.plot(time, alpha1)
-    # plt.show()
-
+    
+
+def mainV3():
+    gear = SpurGear()
+    gear.plot()
 
 if __name__ == "__main__":
-    mainV2()
+    mainV3()
+
+
+
+# def mainV2():
+#     pass
+#     # gear = spurGear(name="gearProva")
+#     # gear.assignGeometricalProperties(
+#     #     module=3.2,
+#     #     teethNumber=31,
+#     #     pressureAngle=20 * pi / 180,
+#     #     thickness=0.0381 * 1e3,
+#     # )
+#     # gear.assignMaterialProperties(young=2.068 * 1e5, poisson=0.3)
+#     # gear.assignDynamicProperties(massX=1, massY=1, inertiaT=0.5)
+#     # gear.stateSpace()
+#     # print("object created")
+
+
+# class spurGearOld:
+
+#     def __init__(
+#         self,
+#         name: str,
+#         module: float,
+#         teeth_number: int,
+#         pressure_angle: float,
+#         thickness: float,
+#         young: float,
+#         poisson: float,
+#         rotation_direction: str,
+#     ):
+#         """
+#         spurGearOld.__init__(...)
+
+#         Creates a driving spurGearOld object.
+
+#         Parameters
+#         ----------
+#         name : str
+#             Name of the gear
+#         module : float
+#             module of the gear in mm
+#         teetnumber : int
+#             number of teeth of the gear
+#         root_diameter : float
+#             root_diameter of the gear in mm
+#         pressure_angle : float
+#             pressure angle of the gear in rad
+
+#         Returns
+#         -------
+#         out: spurGearOld
+#             A spurGearOld object satisfying the specified requirements
+#         """
+#         self.name = name
+#         self.module = module
+#         self.teeth_number = teeth_number
+#         self.pressure_angle = pressure_angle
+#         self.thickness = thickness
+#         self.young = young
+#         self.poisson = poisson
+#         self.rotation_direction = rotation_direction
+#         self.compute_diameters()
+#         self.compute_radiuses()
+#         self.compute_alpha_angle()
+#         self.mode = "driving"
+#         self.initial_phase = 0
+
+#     # https://realpython.com/python-multiple-constructors/
+#     @classmethod
+#     def from_module_pitchdiameter(
+#         cls,
+#         name: str,
+#         module: float,
+#         pitch_diameter: float,
+#         pressure_angle: float,
+#         thickness: float,
+#         young: float,
+#         poisson: float,
+#         rotation_direction: str,
+#     ):
+#         """
+#         spurGearOld.__init__(...)
+
+#         Creates a driving spurGearOld object.
+
+#         Parameters
+#         ----------
+#         name : str
+#             Name of the gear
+#         module : float
+#             module of the gear in mm
+#         pitch_diameter : float
+#             ptich_diamater of the gear in mm
+#         root_diameter : float
+#             root_diameter of the gear in mm
+#         pressure_angle : float
+#             pressure angle of the gear in deg
+
+#         Returns
+#         -------
+#         out: spurGearOld
+#             A spurGearOld object satisfying the specified requirements
+#         """
+#         teeth_number = int(pitch_diameter / module)
+#         return cls(
+#             name,
+#             module,
+#             teeth_number,
+#             pressure_angle,
+#             thickness,
+#             young,
+#             poisson,
+#             rotation_direction,
+#         )
+
+#     @classmethod
+#     def from_teethnumber_pitchdiamter(
+#         cls,
+#         name: str,
+#         teeth_number: int,
+#         pitch_diameter: float,
+#         pressure_angle: float,
+#         thickness: float,
+#         young: float,
+#         poisson: float,
+#         rotation_direction: str,
+#     ):
+#         """
+#         spurGearOld.__init__(...)
+
+#         Creates a driving spurGearOld object.
+
+#         Parameters
+#         ----------
+#         name : str
+#             Name of the gear
+#         module : float
+#             module of the gear in mm
+#         pitch_diameter : float
+#             ptich_diamater of the gear in mm
+#         root_diameter : float
+#             root_diameter of the gear in mm
+#         pressure_angle : float
+#             pressure angle of the gear in deg
+
+#         Returns
+#         -------
+#         out: spurGearOld
+#             A spurGearOld object satisfying the specified requirements
+#         """
+#         module = pitch_diameter / teeth_number
+#         return cls(
+#             name,
+#             module,
+#             teeth_number,
+#             pressure_angle,
+#             thickness,
+#             young,
+#             poisson,
+#             rotation_direction,
+#         )
+
+#     @classmethod
+#     def driven_gear(
+#         cls,
+#         name: str,
+#         teeth_number: int,
+#         thickness: float,
+#         young: float,
+#         poisson: float,
+#         other: "spurGearOld",
+#     ):
+#         if other.rotation_direction == "clockwise":
+#             rotation_direction = "counterclockwise"
+#         else:
+#             rotation_direction = "clockwise"
+
+#         self = cls(
+#             name,
+#             other.module,
+#             teeth_number,
+#             other.pressure_angle,
+#             thickness,
+#             young,
+#             poisson,
+#             rotation_direction,
+#         )
+#         self.mode = "driven"
+#         return self
+
+#     def assign_dynamic_properties(self, inertia):
+#         self.inertia = inertia
+
+#     def compute_diameters(self):
+#         pitch_diameter = self.teeth_number * self.module
+#         self.diameter = {
+#             "pitch": pitch_diameter,
+#             "base": pitch_diameter * np.cos(self.pressure_angle),
+#             "addendum": pitch_diameter + 2 * self.module,
+#             "dedendum": pitch_diameter - 2 * self.module,
+#             "root": pitch_diameter - 2.5 * self.module,
+#         }
+#         self.root_greater_than_base = self.diameter["root"] > self.diameter["base"]
+
+#     def compute_radiuses(self):
+#         self.radius = {key: value / 2 for key, value in self.diameter.items()}
+
+#     def compute_phi_angle(self, diameter: float) -> float:
+#         return np.sqrt(diameter**2 / self.diameter["base"] ** 2 - 1)
+
+#     def compute_csi_angle(self, diameter: float) -> float:
+#         return np.arcsin(
+#             self.compute_phi_angle(diameter)
+#             / np.sqrt(1 + self.compute_phi_angle(diameter) ** 2)
+#         )
+
+#     def compute_psi_angle(self, diameter: float) -> float:
+#         return self.compute_phi_angle(diameter) - self.compute_csi_angle(diameter)
+
+#     def compute_alpha_angle(self):
+#         alpha2 = (
+#             pi / (2 * self.teeth_number)
+#             + np.tan(self.pressure_angle)
+#             - self.pressure_angle
+#         )
+#         if self.root_greater_than_base:
+#             self.alpha = {
+#                 2: alpha2,
+#                 4: alpha2 - self.compute_psi_angle(self.diameter["root"]),
+#                 5: self.compute_phi_angle(self.diameter["root"]) - alpha2,
+#             }
+#         else:
+#             self.alpha = {
+#                 2: alpha2,
+#                 3: np.arcsin(
+#                     self.radius["base"] / self.radius["root"] * np.sin(alpha2)
+#                 ),
+#             }
+#             self.angle_at_base = 2 * alpha2
+
+    
+    
+    
+    
+    
+    
+#     def compute_circles(self, centre_position: tuple[float, float] = (0, 0)) -> dict:
+#         circles = {
+#             radius_name: plt.Circle(
+#                 centre_position,
+#                 radius,
+#                 edgecolor="k",
+#                 facecolor="none",
+#                 linewidth=0.5,
+#                 linestyle="dashed",
+#             )
+#             for radius_name, radius in self.radius.items()
+#         }
+#         return circles
+
+#     def compute_involute(
+#         self, clockwise: bool = True, npoints: int = 150
+#     ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
+#         if self.root_greater_than_base:
+#             diameters = np.linspace(
+#                 self.diameter["root"], self.diameter["addendum"], npoints
+#             )
+#         else:
+#             diameters = np.linspace(
+#                 self.diameter["base"], self.diameter["addendum"], npoints
+#             )
+
+#         diameters = diameters[:, np.newaxis]
+#         radiuses = diameters / 2
+#         angles = self.compute_psi_angle(diameters) - self.angle_at_base / 2
+
+#         if clockwise:
+#             angles = -angles
+
+#         return (radiuses, angles)
+
+#     def compute_all_involutes(self, phase: float = 0):
+#         teeth_angles = np.linspace(
+#             0, 2 * pi, self.teeth_number, endpoint=False
+#         ).reshape(1, -1)
+#         teeth_angles += self.initial_phase + phase
+#         radiuses_cw, angles_cw = self.compute_involute()
+#         radiuses_ccw, angles_ccw = self.compute_involute(clockwise=False)
+#         angles_cw = angles_cw + teeth_angles
+#         angles_ccw = angles_ccw + teeth_angles
+#         radiuses = np.concatenate(
+#             [radiuses_cw] * self.teeth_number + [radiuses_ccw] * self.teeth_number,
+#             axis=1,
+#         )
+#         angles = np.concatenate((angles_cw, angles_ccw), axis=1)
+#         return (radiuses, angles)
+
+#     def compute_ext_lines(
+#         self, involute_angles: npt.NDArray[np.float64]
+#     ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
+#         ext_line_radiuses = self.radius["addendum"]
+#         ext_line_angles = np.linspace(
+#             involute_angles[-1, : self.teeth_number],
+#             involute_angles[-1, self.teeth_number :],
+#             5,
+#         )
+#         return (ext_line_radiuses, ext_line_angles)
+
+#     def compute_rad_lines(
+#         self, involute_angles: npt.NDArray[np.float64]
+#     ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
+#         rad_line_angles = involute_angles[0, :].reshape(1, -1)
+#         rad_line_radiuses = np.array([[self.radius["root"]], [self.radius["base"]]])
+#         return (rad_line_radiuses, rad_line_angles)
+
+#     def compute_str_lines(
+#         self, involute_angles: npt.NDArray[np.float64]
+#     ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
+#         str_line_radiuses = np.array([[self.radius["root"]], [self.radius["base"]]])
+#         deltas = np.concatenate(
+#             [np.ones([1, self.teeth_number]), -np.ones([1, self.teeth_number])], axis=1
+#         ) * (
+#             np.arcsin(
+#                 self.radius["base"]
+#                 / self.radius["root"]
+#                 * np.sin(self.angle_at_base / 2)
+#             )
+#             - self.angle_at_base / 2
+#         )
+
+#         str_line_angles = np.concatenate(
+#             [
+#                 involute_angles[0, :].reshape(1, -1) + deltas,
+#                 involute_angles[0, :].reshape(1, -1),
+#             ],
+#             axis=0,
+#         )
+#         return (str_line_radiuses, str_line_angles)
+
+#     def compute_int_lines(
+#         self, angles: npt.NDArray[np.float64]
+#     ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
+#         int_line_radiuses = self.radius["root"]
+#         int_line_angle_starts = angles[0, : self.teeth_number]
+#         int_line_angle_ends = np.roll(angles[0, self.teeth_number :], -1)
+#         int_line_angle_ends[-1] += 2 * pi
+#         int_line_angles = np.linspace(int_line_angle_starts, int_line_angle_ends, 5)
+#         return (int_line_radiuses, int_line_angles)
+
+#     def compute_teeth_angles(
+#         self,
+#         initial_phase: float,
+#         speed: float,
+#         simulation_time_vector: npt.NDArray[np.float64],
+#     ) -> npt.NDArray[np.float64]:
+#         simulation_time_vector = np.reshape(simulation_time_vector, (-1, 1))
+#         teeth_shift = np.arange(self.teeth_number) * 2 * pi / self.teeth_number
+#         teeth_shift = np.reshape(teeth_shift, (1, -1))
+#         theta = initial_phase + speed * simulation_time_vector + teeth_shift
+#         return wrapTo2Pi(theta)
+
+#     def compute_engagement(
+#         self,
+#         teeth_angles: npt.NDArray[np.float64],
+#         relative_angle: float,
+#         other: "spurGearOld",
+#     ) -> npt.NDArray[np.float64]:
+#         match self.mode:
+#             case "driving":
+#                 if self.rotation_direction == "clockwise":
+#                     alpha1 = relative_angle + self.pressure_angle - teeth_angles
+#                 else:
+#                     alpha1 = relative_angle - self.pressure_angle + teeth_angles
+#             case "driven":
+#                 if self.rotation_direction == "clockwise":
+#                     alpha1 = relative_angle - self.pressure_angle + teeth_angles - pi
+#                 else:
+#                     alpha1 = relative_angle + self.pressure_angle - teeth_angles + pi
+#         return wrapToPi(alpha1)
+
+#     def compute_alpha1(
+#         self, teeth_angles: npt.NDArray[np.float64], relative_angle: float
+#     ) -> npt.NDArray[np.float64]:
+#         match self.mode:
+#             case "driving":
+#                 if self.rotation_direction == "clockwise":
+#                     alpha1 = relative_angle + self.pressure_angle - teeth_angles
+#                 else:
+#                     alpha1 = relative_angle - self.pressure_angle + teeth_angles
+#             case "driven":
+#                 if self.rotation_direction == "clockwise":
+#                     alpha1 = relative_angle - self.pressure_angle + teeth_angles - pi
+#                 else:
+#                     alpha1 = relative_angle + self.pressure_angle - teeth_angles + pi
+#         return wrapToPi(alpha1)
+
+#     def compute_mesh_stiffness(self, alpha1: float, npoints: int = 100) -> float:
+#         if self.root_greater_than_base:
+#             alpha = np.linspace(-alpha1, self.alpha[5], npoints)
+#             kbinv = (
+#                 3
+#                 * (
+#                     1
+#                     + np.cos(alpha1)
+#                     * ((self.alpha[2] - alpha) * np.sin(alpha) - np.cos(alpha))
+#                 )
+#                 ** 2
+#                 * (self.alpha[2] - alpha)
+#                 * np.cos(alpha)
+#                 / (
+#                     2
+#                     * self.young
+#                     * self.thickness
+#                     * (np.sin(alpha) + (self.alpha[2] - alpha) * np.cos(alpha)) ** 3
+#                 )
+#             )
+#             kbinv = sc.integrate.trapezoid(kbinv, x=alpha, axis=0)
+#         else:
+#             pass
+
+#         khinv = 4 * (1 - self.poisson**2) / (pi * self.young * self.thickness)
+#         return kbinv
+
+#     def example_mesh_stiffness(self, t):
+#         return 10 + np.sin(t)
+
+#     def example_mesh_damping(self, t):
+#         return 0.5 + 0.1 * np.sin(t)
+
+#     def plot(
+#         self,
+#         ax: plt.Axes,
+#         centre_position: tuple[float, float] = (0, 0),
+#         phase: float = 0,
+#     ):
+#         circles = self.compute_circles(centre_position=centre_position)
+#         for circle in circles.values():
+#             ax.add_artist(circle)
+
+#         involute_radiuses, involute_angles = self.compute_all_involutes(phase=phase)
+#         ext_line_radiuses, ext_line_angles = self.compute_ext_lines(involute_angles)
+#         if self.root_greater_than_base:
+#             int_line_radiuses, int_line_angles = self.compute_int_lines(involute_angles)
+#         else:
+#             # rad_line_radiuses, rad_line_angles = self.compute_rad_lines(
+#             #     involute_angles)
+#             str_line_radiuses, str_line_angles = self.compute_str_lines(involute_angles)
+#             int_line_radiuses, int_line_angles = self.compute_int_lines(str_line_angles)
+#             # int_line_radiuses, int_line_angles = self.compute_int_lines(
+#             #     rad_line_angles)
+
+#         invoultes = ax.plot(
+#             involute_radiuses * np.cos(involute_angles),
+#             involute_radiuses * np.sin(involute_angles),
+#             "k",
+#         )
+#         int_lines = ax.plot(
+#             int_line_radiuses * np.cos(int_line_angles),
+#             int_line_radiuses * np.sin(int_line_angles),
+#             "k",
+#         )
+#         ext_lines = ax.plot(
+#             ext_line_radiuses * np.cos(ext_line_angles),
+#             ext_line_radiuses * np.sin(ext_line_angles),
+#             "k",
+#         )
+#         if not (self.root_greater_than_base):
+#             # rad_lines = ax.plot(rad_line_radiuses*np.cos(rad_line_angles),
+#             #                     rad_line_radiuses*np.sin(rad_line_angles), 'k')
+#             str_lines = ax.plot(
+#                 str_line_radiuses * np.cos(str_line_angles),
+#                 str_line_radiuses * np.sin(str_line_angles),
+#                 "k",
+#             )
+
+#     def draw_circles(self, ax: plt.Axes):
+#         circles_dict = self.compute_circles()
+#         handles = {
+#             "circles": [ax.add_artist(circle) for circle in circles_dict.values()]
+#         }
+#         return handles
+
+#     def draw_gear(self, ax: plt.Axes, phase: float = 0, mode: str = "straight"):
+#         involute_radiuses, involute_angles = self.compute_all_involutes(phase=phase)
+#         handles = {
+#             "involutes": ax.plot(
+#                 involute_radiuses * np.cos(involute_angles),
+#                 involute_radiuses * np.sin(involute_angles),
+#                 "k",
+#             )
+#         }
+
+#         ext_line_radiuses, ext_line_angles = self.compute_ext_lines(involute_angles)
+#         handles["ext_lines"] = ax.plot(
+#             ext_line_radiuses * np.cos(ext_line_angles),
+#             ext_line_radiuses * np.sin(ext_line_angles),
+#             "k",
+#         )
+
+#         if not (self.root_greater_than_base):
+#             match mode:
+#                 case "straight":
+#                     str_line_radiuses, str_line_angles = self.compute_str_lines(
+#                         involute_angles
+#                     )
+#                     handles["str_lines"] = ax.plot(
+#                         str_line_radiuses * np.cos(str_line_angles),
+#                         str_line_radiuses * np.sin(str_line_angles),
+#                         "k",
+#                     )
+#                     int_line_radiuses, int_line_angles = self.compute_int_lines(
+#                         str_line_angles
+#                     )
+#                 case "radial":
+#                     rad_line_radiuses, rad_line_angles = self.compute_rad_lines(
+#                         involute_angles
+#                     )
+#                     rad_lines = ax.plot(
+#                         rad_line_radiuses * np.cos(rad_line_angles),
+#                         rad_line_radiuses * np.sin(rad_line_angles),
+#                         "k",
+#                     )
+#                     int_line_radiuses, int_line_angles = self.compute_int_lines(
+#                         rad_line_angles
+#                     )
+#                 case _:
+#                     raise Exception("mode must be one of 'straight' and 'radial'")
+#         else:
+#             int_line_radiuses, int_line_angles = self.compute_int_lines(involute_angles)
+
+#             handles["int_lines"] = ax.plot(
+#                 int_line_radiuses * np.cos(int_line_angles),
+#                 int_line_radiuses * np.sin(int_line_angles),
+#                 "k",
+#             )
+#         return handles
+
+#     def animate(self, ax: plt.Axes):
+#         handles = self.draw_circles(ax)
+#         handles.update(self.draw_gear(ax))
+
+#     def __repr__(self):
+#         return f"""Generated by spurGearOld(name = "{self.name}",
+#             module = {self.module},
+#             teeth_number = {self.teeth_number},
+#             pressure_angle = {self.pressure_angle},
+#             thickness = {self.thickness},
+#             young = {self.young},
+#             poisson = {self.poisson})
+#             """
+
+#     def __str__(self):
+#         return f"""object of type spurGearOld, with:
+#             name: {self.name}
+#             module: {self.module}
+#             number of teeth: {self.teeth_number}
+#             diameters: {self.diameter}
+#             pressure angle: {self.pressure_angle}
+#             thickness: {self.thickness}
+#             young's modulus: {self.young}
+#             poisson: {self.poisson}"""
+
+
+# def main():
+#     pinion = spurGearOld(
+#         name="driving_gear",
+#         module=3.2,
+#         teeth_number=31,
+#         pressure_angle=20 * pi / 180,
+#         thickness=0.0381 * 1e3,
+#         young=2.068 * 1e5,
+#         poisson=0.3,
+#         rotation_direction="counterclockwise",
+#     )
+
+#     gear = spurGearOld.driven_gear(
+#         name="driven_gear",
+#         teeth_number=19,
+#         thickness=0.0381 * 1e3,
+#         young=2.068 * 1e5,
+#         poisson=0.3,
+#         other=pinion,
+#     )
+
+#     ring = spurGearOld.driven_gear(
+#         name="driven_gear",
+#         teeth_number=81,
+#         thickness=0.0381 * 1e3,
+#         young=2.068 * 1e5,
+#         poisson=0.3,
+#         other=gear,
+#     )
+
+#     print(gear)
+#     print(pinion)
+#     print(
+#         "\n\nI should include the dynamic variables (centre position, gear angle, revolution speed) missing. Fix 'compute_engagements' and missing mesh stiffnesses\n\n"
+#     )
+
+#     # c.compute_mesh_stiffness(pi/4)
+
+#     # fig, ax = plt.subplots(1, 1)
+#     # ax.set_aspect("equal")
+#     # pinion.plot(ax, phase=0)
+#     # # a.animate(ax)
+#     # plt.show()
+
+#     # Debug mesh stiffness
+#     # gear_speed = 60  # rpm
+#     # period = 60/gear_speed  # s
+#     # dt = 0.0001
+#     # time = np.arange(dt, period, dt)
+#     # theta = gear.compute_teeth_angles(0, gear_speed, time)
+#     # alpha1 = gear.compute_alpha1(theta, 0)
+
+#     # fig, ax = plt.subplots(1, 1)
+#     # ax.plot(time, alpha1)
+#     # plt.show()
+
+
+

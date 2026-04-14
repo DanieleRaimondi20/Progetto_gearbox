@@ -1,10 +1,12 @@
 from progetto_gearbox.interfaces.simulation_interfaces import Model
+from progetto_gearbox.utils.input_functions import sinusoidal
 from progetto_gearbox.simulation import Simulation
 import numpy as np
 
 
 class OneDofSecondOrderModel(Model):
-    def __init__(self, mass: float, damping: float, stiffness: float):
+    def __init__(self, name: str, mass: float, damping: float, stiffness: float):
+        self.name = name
         self.init_linear_model()
         self.state_names = ["vel", "pos"]
         self.state_uoms = ["m/s", "m"]
@@ -14,7 +16,7 @@ class OneDofSecondOrderModel(Model):
         self.output_uoms = ["m/s", "m"]
         self.get_matrices_dimensions()
 
-        self.input_funcs = {"pos": lambda t: 10 * np.sin(t)}
+        self.input_funcs = {"pos": sinusoidal(amplitude=20,frequency=10,phase=np.pi)}
         self.state_transition_matrix = np.array(
             [[-damping / mass, -stiffness / mass], [1, 0]]
         )
@@ -22,23 +24,25 @@ class OneDofSecondOrderModel(Model):
         self.output_matrix = np.eye(2)
         self.feedthrough_matrix = np.zeros((2, 1))
         self.check_matrices_dimensions()
-        self.initial_conditions = np.zeros(self.ns)
+        self.set_initial_conditions()
 
     @classmethod
     def from_adimensional_parameters(
-        cls, mass: float, critical_damping: float, natural_frequency: float
+        cls, name: str, mass: float, critical_damping: float, natural_frequency: float
     ):
         natural_pulsation = 2 * np.pi * natural_frequency
         stiffness = natural_pulsation**2 * mass
         damping = critical_damping * (2 * mass * natural_pulsation)
-        return cls(mass, damping, stiffness)
+        return cls(name, mass, damping, stiffness)
 
 
 def create_underdamped_system() -> OneDofSecondOrderModel:
+    name = "underdamped_system"
     mass = 1  # kg
     critical_damping = 0.1  # -
     natural_frequency = 10  # Hz
     model = OneDofSecondOrderModel.from_adimensional_parameters(
+        name=name,
         mass=mass,
         critical_damping=critical_damping,
         natural_frequency=natural_frequency,
@@ -47,10 +51,12 @@ def create_underdamped_system() -> OneDofSecondOrderModel:
 
 
 def create_critically_damped_system() -> OneDofSecondOrderModel:
+    name = "critically_damped_system"
     mass = 1  # kg
     critical_damping = 1  # -
     natural_frequency = 10  # Hz
     model = OneDofSecondOrderModel.from_adimensional_parameters(
+        name=name,
         mass=mass,
         critical_damping=critical_damping,
         natural_frequency=natural_frequency,
@@ -59,10 +65,12 @@ def create_critically_damped_system() -> OneDofSecondOrderModel:
 
 
 def create_overdamped_system() -> OneDofSecondOrderModel:
+    name = "overdamped_system"
     mass = 1  # kg
     critical_damping = 1.5  # -
     natural_frequency = 10  # Hz
     model = OneDofSecondOrderModel.from_adimensional_parameters(
+        name=name,
         mass=mass,
         critical_damping=critical_damping,
         natural_frequency=natural_frequency,
@@ -75,7 +83,6 @@ def simulate_underdamped_system() -> Simulation:
     underdamped_model = create_underdamped_system()
     underdamped_model.set_initial_conditions(init_conditions_dict=initial_conditions)
     underdamped_model_simulation = Simulation(
-        name="underdamped_model_simulation",
         t_tot=5.0,
         deltat=0.0005,
         model=underdamped_model,
@@ -92,7 +99,6 @@ def simulate_critically_damped_system() -> Simulation:
         init_conditions_dict=initial_conditions
     )
     critically_damped_model_simulation = Simulation(
-        name="critically_damped_model_simulation",
         t_tot=5.0,
         deltat=0.0005,
         model=critically_damped_model,
@@ -104,10 +110,9 @@ def simulate_critically_damped_system() -> Simulation:
 
 def simulate_overdamped_system() -> Simulation:
     initial_conditions = {"pos": 0.2}
-    overdamped_model = create_critically_damped_system()
+    overdamped_model = create_overdamped_system()
     overdamped_model.set_initial_conditions(init_conditions_dict=initial_conditions)
     overdamped_model_simulation = Simulation(
-        name="overdamped_model_simulation",
         t_tot=5.0,
         deltat=0.0005,
         model=overdamped_model,

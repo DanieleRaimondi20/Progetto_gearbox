@@ -14,13 +14,12 @@ class Simulation:
 
     def __init__(
         self,
-        name: str,
         t_tot: float,
         deltat: float,
         model: Model,
         method: SimulationMethod = SimulationMethod.RK45,
     ):
-        self.name = name
+        self.name = model.name + "_simulation"
         self.t_tot = t_tot
         self.deltat = deltat
         self.model = model

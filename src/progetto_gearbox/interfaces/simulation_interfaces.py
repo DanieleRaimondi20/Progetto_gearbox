@@ -10,7 +10,7 @@ from progetto_gearbox.utils.array_validation import (
 
 
 class Model(ABC):
-
+    name: str
     state_names: list[str]
     state_uoms: list[str]
     input_names: list[str]
@@ -29,7 +29,7 @@ class Model(ABC):
     non_linear_output: Callable | None
     initial_conditions: NDArray
 
-    def set_initial_conditions(self, init_conditions_dict: dict[float]):
+    def set_initial_conditions(self, init_conditions_dict: dict[float] = {}):
         self.initial_conditions = np.array(
             [
                 (
