@@ -12,7 +12,14 @@ from bokeh.layouts import gridplot, column
 class Simulation:
     simulation_number = 0
 
-    def __init__(self, name: str, t_tot: float, deltat: float, model: Model, method: SimulationMethod = SimulationMethod.RK45):
+    def __init__(
+        self,
+        name: str,
+        t_tot: float,
+        deltat: float,
+        model: Model,
+        method: SimulationMethod = SimulationMethod.RK45,
+    ):
         self.name = name
         self.t_tot = t_tot
         self.deltat = deltat
@@ -29,14 +36,20 @@ class Simulation:
             method=self.method,
             # vectorized=True,
         )
-        self.solution = {"time": solution.t,
+        self.solution = {
+            "time": solution.t,
             "states": solution.y,
             "inputs": self.model.get_inputs(solution.t),
-            "outputs": self.model.get_outputs(solution.t, solution.y)}
-        
+            "outputs": self.model.get_outputs(solution.t, solution.y),
+        }
+
     def states_plot(self, grids: list, shared_x_range):
-        grids.append(Div(text=f"<h2>STATE PLOTS</h2>"),)
-        for state_idx, (state, state_uom) in enumerate(zip(self.model.state_names, self.model.state_uoms)):
+        grids.append(
+            Div(text=f"<h2>STATE PLOTS</h2>"),
+        )
+        for state_idx, (state, state_uom) in enumerate(
+            zip(self.model.state_names, self.model.state_uoms)
+        ):
             kwargs = dict(
                 title=f"State {state.capitalize()}",
                 x_axis_label="Time [s]",
@@ -53,18 +66,19 @@ class Simulation:
             if shared_x_range is None:
                 shared_x_range = p.x_range
 
-            p.line(
-                x=self.solution["time"],
-                y=self.solution["states"][state_idx, :]
-            )
+            p.line(x=self.solution["time"], y=self.solution["states"][state_idx, :])
 
             self.plots["states"].append(p)
         grids.append(gridplot(self.plots["states"], ncols=2))
         return grids, shared_x_range
-        
+
     def inputs_plot(self, grids: list, shared_x_range):
-        grids.append(Div(text=f"<h2>INPUT PLOTS</h2>"),)
-        for input_idx, (input_name, input_uom) in enumerate(zip(self.model.input_names, self.model.input_uoms)):
+        grids.append(
+            Div(text=f"<h2>INPUT PLOTS</h2>"),
+        )
+        for input_idx, (input_name, input_uom) in enumerate(
+            zip(self.model.input_names, self.model.input_uoms)
+        ):
             kwargs = dict(
                 title=f"Input {input_name.capitalize()}",
                 x_axis_label="Time [s]",
@@ -81,18 +95,19 @@ class Simulation:
             if shared_x_range is None:
                 shared_x_range = p.x_range
 
-            p.line(
-                x=self.solution["time"],
-                y=self.solution["inputs"][input_idx, :]
-            )
+            p.line(x=self.solution["time"], y=self.solution["inputs"][input_idx, :])
 
             self.plots["inputs"].append(p)
         grids.append(gridplot(self.plots["inputs"], ncols=2))
         return grids, shared_x_range
 
     def outputs_plot(self, grids: list, shared_x_range):
-        grids.append(Div(text=f"<h2>OUTPUT PLOTS</h2>"),)
-        for output_idx, (output, output_uom) in enumerate(zip(self.model.output_names, self.model.output_uoms)):
+        grids.append(
+            Div(text=f"<h2>OUTPUT PLOTS</h2>"),
+        )
+        for output_idx, (output, output_uom) in enumerate(
+            zip(self.model.output_names, self.model.output_uoms)
+        ):
             kwargs = dict(
                 title=f"Output {output.capitalize()}",
                 x_axis_label="Time [s]",
@@ -109,17 +124,18 @@ class Simulation:
             if shared_x_range is None:
                 shared_x_range = p.x_range
 
-            p.line(
-                x=self.solution["time"],
-                y=self.solution["outputs"][output_idx, :]
-            )
+            p.line(x=self.solution["time"], y=self.solution["outputs"][output_idx, :])
 
             self.plots["outputs"].append(p)
         grids.append(gridplot(self.plots["outputs"], ncols=2))
         return grids, shared_x_range
 
     def plot(self):
-        self.plots: dict[str, list[figure]] = {"states": [], "inputs": [], "outputs": []}
+        self.plots: dict[str, list[figure]] = {
+            "states": [],
+            "inputs": [],
+            "outputs": [],
+        }
         output_file(f"plots/{self.name}_plots.html")
         shared_x_range = None
         grids = []
@@ -128,4 +144,3 @@ class Simulation:
         grids, shared_x_range = self.outputs_plot(grids, shared_x_range)
         layout = column(*grids)
         show(layout)
-

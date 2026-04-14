@@ -3,64 +3,55 @@
 systems. The module allows to compute the mesh stiffness of meshing gears and to
 assemble them in systems where kinematic and dynamic analysis can be done."""
 
-from re import match
-from unittest import case
-
+from progetto_gearbox.utils.angles import wrapToPi
+from numpy import pi
 import numpy as np
-import numpy.typing as npt
-import matplotlib.pyplot as plt
-import scipy as sc
-
-# prova
-
-
-def wrapTo2Pi(angle: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
-    return angle % (2 * np.pi)
+from numpy.typing import NDArray
+# import numpy.typing as npt
+# import matplotlib.pyplot as plt
+# import scipy as sc
 
 
-def wrapToPi(angles: np.ndarray) -> np.ndarray:
-    return (angles + np.pi) % (2 * np.pi) - np.pi
-
-
-class spurGear:
+class SpurGear:
     def __init__(self, name: str):
         self.name = name
 
-    def computeDiameters(self):
+    def compute_diameters_and_radiuses(self):
         pitch_diameter = self.teethNumber * self.module
-        self.diameter = {
+        self.diameters = {
             "pitch": pitch_diameter,
             "base": pitch_diameter * np.cos(self.pressureAngle),
             "addendum": pitch_diameter + 2 * self.module,
             "dedendum": pitch_diameter - 2 * self.module,
             "root": pitch_diameter - 2.5 * self.module,
         }
-        self.root_greater_than_base = self.diameter["root"] > self.diameter["base"]
+        self.root_greater_than_base = self.diameters["root"] > self.diameters["base"]
+        self.radius = {key: value / 2 for key, value in self.diameters.items()}
+        
 
-    def computeRadiuses(self):
-        self.radius = {key: value / 2 for key, value in self.diameter.items()}
-    
-    def compute_phi_angle(self, diameter: float) -> float:
-        return np.sqrt(diameter**2 / self.diameter["base"] ** 2 - 1)
+    def compute_phi_angle(self, diameter: float | NDArray) -> float | NDArray:
+        return np.sqrt(diameter**2 / self.diameters["base"] ** 2 - 1)
 
-    def compute_csi_angle(self, diameter: float) -> float:
+    def compute_csi_angle(self, diameter: float | NDArray) -> float | NDArray:
         return np.arcsin(
             self.compute_phi_angle(diameter)
             / np.sqrt(1 + self.compute_phi_angle(diameter) ** 2)
         )
-        
+    
+    def compute_psi_angle(self, diameter: float | NDArray) -> float | NDArray:
+        return self.compute_phi_angle(diameter) - self.compute_csi_angle(diameter)
 
     def compute_alpha_angle(self):
         alpha2 = (
-            np.pi / (2 * self.teethNumber)
+            pi / (2 * self.teethNumber)
             + np.tan(self.pressureAngle)
             - self.pressureAngle
         )
         if self.root_greater_than_base:
             self.alpha = {
                 2: alpha2,
-                4: alpha2 - self.compute_psi_angle(self.diameter["root"]),
-                5: self.compute_phi_angle(self.diameter["root"]) - alpha2,
+                4: alpha2 - self.compute_psi_angle(self.diameters["root"]),
+                5: self.compute_phi_angle(self.diameters["root"]) - alpha2,
             }
         else:
             self.alpha = {
@@ -70,51 +61,64 @@ class spurGear:
                 ),
             }
             self.angle_at_base = 2 * alpha2
-            
-    def assignGeometricalProperties(
+
+    def assign_geometry(
         self, module: float, teethNumber: int, pressureAngle: float, thickness: float
     ):
         self.module = module
         self.teethNumber = teethNumber
         self.pressureAngle = pressureAngle
         self.thickness = thickness
-        self.computeDiameters()
-        self.computeRadiuses()
+        self.compute_diameters_and_radiuses()
         self.compute_alpha_angle()
-        
-    def assignMaterialProperties(self, young: float, poisson: float):
+
+    def assign_material(self, young: float, poisson: float):
         self.young = young
         self.poisson = poisson
-    
+
+
+
+
     def add_initial_conditions(self, init_condit: list[float]):
         self.initial_conditions = init_condit
-    
-    def derive_initial_conditions(self, driving_gear: 'spurGear', gamma: float, ii: int=0, jj: int=0):
-        theta0 = np.pi - (driving_gear.teethNumber/self.teethNumber) * driving_gear.initial_conditions[4] + (driving_gear.teethNumber/self.teethNumber + 1) * gamma - (np.pi/2/self.teethNumber)*(4*ii+ 4*jj - 6)
-        thetad0 = - driving_gear.initial_conditions[5] * driving_gear.teethNumber/self.teethNumber
+
+    def derive_initial_conditions(
+        self, driving_gear: "SpurGear", gamma: float, ii: int = 0, jj: int = 0
+    ):
+        theta0 = (
+            pi
+            - (driving_gear.teethNumber / self.teethNumber)
+            * driving_gear.initial_conditions[4]
+            + (driving_gear.teethNumber / self.teethNumber + 1) * gamma
+            - (pi / 2 / self.teethNumber) * (4 * ii + 4 * jj - 6)
+        )
+        thetad0 = (
+            -driving_gear.initial_conditions[5]
+            * driving_gear.teethNumber
+            / self.teethNumber
+        )
         return theta0, thetad0
-        
-    def assignDynamicProperties(self, massX: float, massY: float, inertiaT: float):
+
+    def assign_dynamics(self, massX: float, massY: float, inertiaT: float):
         self.inertia = {"X": massX, "Y": massY, "T": inertiaT}
-     
+
     def computeTeethPosition(self, gearAngle: float):
-        pitch_angle = 2 * np.pi / self.teethNumber
+        pitch_angle = 2 * pi / self.teethNumber
         pitch_angle_vector = np.arange(self.teethNumber) * pitch_angle
         return wrapToPi(gearAngle + pitch_angle_vector)
-        
-        
+
     # def computeTeethEngagement(self, teethPosition, other_Gear):
-         
+
     #     phig_a = self.compute_phi_angle(self.diameter["addendum"])
-    #     phig_r = #calcolato sulla base dell'addendu dell'altro gear 
+    #     phig_r = #calcolato sulla base dell'addendu dell'altro gear
     #     self.compute_phi_angle(self.diameter["root"]) if self.root_greater_than_base else 0
 
     #     # Calcola thetagi
     #     thetagi = wrap_to_pi(teethPosition + self.angle_at_base/2)
-    
+
     #     # Condizione di engagement
     #     engagement = np.logical_and(
-    #         #phistart 
+    #         #phistart
     #         thetagi >= -self.pressureAngle + phig_r,
     #         #phiexit
     #         thetagi < - self.pressureAngle + phig_a
@@ -123,56 +127,76 @@ class spurGear:
     #         print("No engagement detected.")
     #     # Angolo di engagement
     #     alfa1_i = self.pressureAngle + teethPosition
-    
+
     #     return engagement, alfa1_i
-  
-  
-    def computeTeethEngagement(self, teethPosition, mode, gamma, gear_rotation, other_gear):
+
+    def computeTeethEngagement(
+        self, teethPosition, mode, gamma, gear_rotation, other_gear
+    ):
 
         csi_a2 = other_gear.compute_csi_angle(other_gear.diameter["addendum"])
         a0 = self.radius["pitch"] + other_gear.radius["pitch"]
-        ro2 = np.sqrt(other_gear.radius["addendum"]**2 +a0**2 - 2*other_gear.radius["addendum"]*a0*np.cos(csi_a2- self.pressureAngle))
-        phi_2 = self.compute_phi_angle(2*ro2)
+        ro2 = np.sqrt(
+            other_gear.radius["addendum"] ** 2
+            + a0**2
+            - 2
+            * other_gear.radius["addendum"]
+            * a0
+            * np.cos(csi_a2 - self.pressureAngle)
+        )
+        phi_2 = self.compute_phi_angle(2 * ro2)
         phi_a = self.compute_phi_angle(self.diameter["addendum"])
-        
+
         match (mode, gear_rotation):
-            case ("driving", gr) if gr > 0: #
+            case ("driving", gr) if gr > 0:  #
                 thetagi = wrapToPi(teethPosition - gamma)
-                theta_start = wrapToPi( + (- self.pressureAngle + phi_2 - self.angle_at_base/2)) 
-                theta_end = wrapToPi( + (- self.pressureAngle + phi_a - self.angle_at_base/2))
+                theta_start = wrapToPi(
+                    +(-self.pressureAngle + phi_2 - self.angle_at_base / 2)
+                )
+                theta_end = wrapToPi(
+                    +(-self.pressureAngle + phi_a - self.angle_at_base / 2)
+                )
             case ("driving", gr) if gr < 0:
                 thetagi = wrapToPi(teethPosition - gamma)
-                theta_start = wrapToPi( - (- self.pressureAngle + phi_2 - self.angle_at_base/2))
-                theta_end = wrapToPi( - (- self.pressureAngle + phi_a - self.angle_at_base/2))
+                theta_start = wrapToPi(
+                    -(-self.pressureAngle + phi_2 - self.angle_at_base / 2)
+                )
+                theta_end = wrapToPi(
+                    -(-self.pressureAngle + phi_a - self.angle_at_base / 2)
+                )
             case ("driven", gr) if gr > 0:
-                thetagi = wrapToPi(teethPosition - gamma - np.pi)
-                theta_start = wrapToPi( - (self.pressureAngle - phi_a - self.angle_at_base/2))
-                theta_end = wrapToPi( - (self.pressureAngle - phi_2 - self.angle_at_base/2))
-            case ("driven", gr) if gr < 0: #
-                thetagi = wrapToPi(teethPosition - gamma - np.pi)
-                theta_start = wrapToPi( + (self.pressureAngle - phi_a - self.angle_at_base/2))
-                theta_end = wrapToPi( + (self.pressureAngle - phi_2 - self.angle_at_base/2))
-
+                thetagi = wrapToPi(teethPosition - gamma - pi)
+                theta_start = wrapToPi(
+                    -(self.pressureAngle - phi_a - self.angle_at_base / 2)
+                )
+                theta_end = wrapToPi(
+                    -(self.pressureAngle - phi_2 - self.angle_at_base / 2)
+                )
+            case ("driven", gr) if gr < 0:  #
+                thetagi = wrapToPi(teethPosition - gamma - pi)
+                theta_start = wrapToPi(
+                    +(self.pressureAngle - phi_a - self.angle_at_base / 2)
+                )
+                theta_end = wrapToPi(
+                    +(self.pressureAngle - phi_2 - self.angle_at_base / 2)
+                )
 
         # --- 6) Condizione di ingaggio corretta ---
-     
-        engagement = np.logical_and(
-            thetagi >= theta_start,
-            thetagi <  theta_end)
+
+        engagement = np.logical_and(thetagi >= theta_start, thetagi < theta_end)
 
         if not np.any(engagement):
             print("No engagement detected.")
 
         # Angolo utile per cinematica
-        alfa1_i = - self.pressureAngle + thetagi
+        alfa1_i = -self.pressureAngle + thetagi
 
         return engagement, alfa1_i
-        
-        
+
     def computeStiffnessAngles(self, t, x):
         """to be updated"""
         pass
-    
+
     def meshStiffness(self, engagement, alpha1):
         # Parameters
         E = self.young
@@ -180,103 +204,171 @@ class spurGear:
         v = self.poisson
 
         num_points = 100
-        
+
         # Define alfa range
- 
-        #phig_r - self.angle_at_base/2
-        #np.linspace(0, 1, num_points)[None, :] * (stop - start)[:, None] + start[:, None]
-        
+
+        # phig_r - self.angle_at_base/2
+        # np.linspace(0, 1, num_points)[None, :] * (stop - start)[:, None] + start[:, None]
+
         if self.root_greater_than_base:
-                # Compute Ib, Is, Ia
+            # Compute Ib, Is, Ia
             alpha = np.linspace(-alpha1, self.alpha[5], num_points)
-                
+
             Ib = (
                 (
                     3
-                    * (1 + np.cos(alpha1) * ((self.alpha[2] - alpha) * np.sin(alpha) - np.cos(alpha))) ** 2
+                    * (
+                        1
+                        + np.cos(alpha1)
+                        * ((self.alpha[2] - alpha) * np.sin(alpha) - np.cos(alpha))
+                    )
+                    ** 2
                     * (self.alpha[2] - alpha)
                     * np.cos(alpha)
                 )
-                / (2 * E * L * (np.sin(alpha) + (self.alpha[2] - alpha) * np.cos(alpha)) ** 3)
+                / (
+                    2
+                    * E
+                    * L
+                    * (np.sin(alpha) + (self.alpha[2] - alpha) * np.cos(alpha)) ** 3
+                )
                 * engagement
             )
             Is = (
-                (1.2 * (1 + v) * (self.alpha[2] - alpha) * np.cos(alpha) * np.cos(alpha1) ** 2)
+                (
+                    1.2
+                    * (1 + v)
+                    * (self.alpha[2] - alpha)
+                    * np.cos(alpha)
+                    * np.cos(alpha1) ** 2
+                )
                 / (E * L * (np.sin(alpha) + (self.alpha[2] - alpha) * np.cos(alpha)))
                 * engagement
             )
             Ia = (
-                ((self.alpha[2] - alpha) * np.cos(alpha) * np.sin(alpha1)** 2)
-                / (2 * E * L * (np.sin(alpha) + (self.alpha[2] - alpha) * np.cos(alpha)))
+                ((self.alpha[2] - alpha) * np.cos(alpha) * np.sin(alpha1) ** 2)
+                / (
+                    2
+                    * E
+                    * L
+                    * (np.sin(alpha) + (self.alpha[2] - alpha) * np.cos(alpha))
+                )
                 * engagement
             )
-            
+
         else:
             alpha = np.linspace(-alpha1, self.alpha[2], num_points)
-            
+
             Ib0 = (
-                
-            ## primo termine
+                ## primo termine
+                (
                     (
-                        (1 - ((self.teethNumber - 2.5) * np.cos(alpha1) * np.cos(alpha[3])) / (self.teethNumber * np.cos(self.pressureAngle))) ** 3 - (1 - np.cos(alpha1) * np.cos(alpha[2] ** 3))
+                        1
+                        - ((self.teethNumber - 2.5) * np.cos(alpha1) * np.cos(alpha[3]))
+                        / (self.teethNumber * np.cos(self.pressureAngle))
                     )
-                    / (2 * E * L * (np.cos(alpha1) * np.sin(alpha[2]) ** 3)))
-            
+                    ** 3
+                    - (1 - np.cos(alpha1) * np.cos(alpha[2] ** 3))
+                )
+                / (2 * E * L * (np.cos(alpha1) * np.sin(alpha[2]) ** 3))
+            )
+
             ## secondo termine
-            
-            Ib =  (
+
+            Ib = (
                 (
                     3
-                    * (1 + np.cos(alpha1) * ((self.alpha[2] - alpha) * np.sin(alpha) - np.cos(alpha))) ** 2
+                    * (
+                        1
+                        + np.cos(alpha1)
+                        * ((self.alpha[2] - alpha) * np.sin(alpha) - np.cos(alpha))
+                    )
+                    ** 2
                     * (self.alpha[2] - alpha)
                     * np.cos(alpha)
                 )
-                / (2 * E * L * (np.sin(alpha) + (self.alpha[2] - alpha) * np.cos(alpha)) ** 3)
+                / (
+                    2
+                    * E
+                    * L
+                    * (np.sin(alpha) + (self.alpha[2] - alpha) * np.cos(alpha)) ** 3
+                )
                 * engagement
             )
-            
+
             Is0 = (
-                
-            ## primo termine
-                    (
-                        1.2 * (1+v) * np.cos(alpha1) ** 2 * (np.cos(alpha[2]) - ((self.teethNumber - 2.5)/(self.teethNumber * np.cos(self.pressureAngle))) * np.cos(alpha[3]))
+                ## primo termine
+                (
+                    1.2
+                    * (1 + v)
+                    * np.cos(alpha1) ** 2
+                    * (
+                        np.cos(alpha[2])
+                        - (
+                            (self.teethNumber - 2.5)
+                            / (self.teethNumber * np.cos(self.pressureAngle))
+                        )
+                        * np.cos(alpha[3])
                     )
-                    / (E * L * (np.sin(alpha[2]))))
-                    
+                )
+                / (E * L * (np.sin(alpha[2])))
+            )
+
             ## secondo termine
-            
+
             Is = (
-                (1.2 * (1 + v) * (self.alpha[2] - alpha) * np.cos(alpha) * np.cos(alpha1) ** 2)
+                (
+                    1.2
+                    * (1 + v)
+                    * (self.alpha[2] - alpha)
+                    * np.cos(alpha)
+                    * np.cos(alpha1) ** 2
+                )
                 / (E * L * (np.sin(alpha) + (self.alpha[2] - alpha) * np.cos(alpha)))
                 * engagement
             )
-            
+
             Ia0 = (
-                
-            ## primo termine
-                    (
-                        np.sin(alpha1) ** 2 * (np.cos(alpha[2] - ((self.teethNumber - 2.5)/(self.teethNumber * np.cos(self.pressureAngle))) * np.cos(alpha[3])))
+                ## primo termine
+                (
+                    np.sin(alpha1) ** 2
+                    * (
+                        np.cos(
+                            alpha[2]
+                            - (
+                                (self.teethNumber - 2.5)
+                                / (self.teethNumber * np.cos(self.pressureAngle))
+                            )
+                            * np.cos(alpha[3])
+                        )
                     )
-                    / (2 * E * L * (np.sin(alpha[2]))))
-                    
+                )
+                / (2 * E * L * (np.sin(alpha[2])))
+            )
+
             ## secondo termine
-            
+
             Ia = (
-                ((self.alpha[2] - alpha) * np.cos(alpha) * np.sin(alpha1)** 2)
-                / (2 * E * L * (np.sin(alpha) + (self.alpha[2] - alpha) * np.cos(alpha)))
+                ((self.alpha[2] - alpha) * np.cos(alpha) * np.sin(alpha1) ** 2)
+                / (
+                    2
+                    * E
+                    * L
+                    * (np.sin(alpha) + (self.alpha[2] - alpha) * np.cos(alpha))
+                )
                 * engagement
             )
-            
+
         # Integrate over alfa
         Kb_inv = np.sum(sc.integrate.trapezoid(Ib, x=alpha, axis=0))
         Ks_inv = np.sum(sc.integrate.trapezoid(Is, x=alpha, axis=0))
         Ka_inv = np.sum(sc.integrate.trapezoid(Ia, x=alpha, axis=0))
-        
+
         if self.root_greater_than_base:
             kb_inv += Ib0
             ks_inv += Is0
             ka_inv += Ia0
-        
+
         # Total stiffness
         Kt = 1 / (Kb_inv + Ks_inv + Ka_inv)
         if all(engagement == 0):
@@ -302,13 +394,12 @@ class spurGear:
         return (A, B, dofs, inputs)
 
 
-
 def mainV2():
     gear = spurGear(name="gearProva")
     gear.assignGeometricalProperties(
         module=3.2,
         teethNumber=31,
-        pressureAngle=20 * np.pi / 180,
+        pressureAngle=20 * pi / 180,
         thickness=0.0381 * 1e3,
     )
     gear.assignMaterialProperties(young=2.068 * 1e5, poisson=0.3)
@@ -521,7 +612,7 @@ class spurGearOld:
 
     def compute_alpha_angle(self):
         alpha2 = (
-            np.pi / (2 * self.teeth_number)
+            pi / (2 * self.teeth_number)
             + np.tan(self.pressure_angle)
             - self.pressure_angle
         )
@@ -577,7 +668,7 @@ class spurGearOld:
 
     def compute_all_involutes(self, phase: float = 0):
         teeth_angles = np.linspace(
-            0, 2 * np.pi, self.teeth_number, endpoint=False
+            0, 2 * pi, self.teeth_number, endpoint=False
         ).reshape(1, -1)
         teeth_angles += self.initial_phase + phase
         radiuses_cw, angles_cw = self.compute_involute()
@@ -639,7 +730,7 @@ class spurGearOld:
         int_line_radiuses = self.radius["root"]
         int_line_angle_starts = angles[0, : self.teeth_number]
         int_line_angle_ends = np.roll(angles[0, self.teeth_number :], -1)
-        int_line_angle_ends[-1] += 2 * np.pi
+        int_line_angle_ends[-1] += 2 * pi
         int_line_angles = np.linspace(int_line_angle_starts, int_line_angle_ends, 5)
         return (int_line_radiuses, int_line_angles)
 
@@ -650,7 +741,7 @@ class spurGearOld:
         simulation_time_vector: npt.NDArray[np.float64],
     ) -> npt.NDArray[np.float64]:
         simulation_time_vector = np.reshape(simulation_time_vector, (-1, 1))
-        teeth_shift = np.arange(self.teeth_number) * 2 * np.pi / self.teeth_number
+        teeth_shift = np.arange(self.teeth_number) * 2 * pi / self.teeth_number
         teeth_shift = np.reshape(teeth_shift, (1, -1))
         theta = initial_phase + speed * simulation_time_vector + teeth_shift
         return wrapTo2Pi(theta)
@@ -669,11 +760,10 @@ class spurGearOld:
                     alpha1 = relative_angle - self.pressure_angle + teeth_angles
             case "driven":
                 if self.rotation_direction == "clockwise":
-                    alpha1 = relative_angle - self.pressure_angle + teeth_angles - np.pi
+                    alpha1 = relative_angle - self.pressure_angle + teeth_angles - pi
                 else:
-                    alpha1 = relative_angle + self.pressure_angle - teeth_angles + np.pi
+                    alpha1 = relative_angle + self.pressure_angle - teeth_angles + pi
         return wrapToPi(alpha1)
-    
 
     def compute_alpha1(
         self, teeth_angles: npt.NDArray[np.float64], relative_angle: float
@@ -686,9 +776,9 @@ class spurGearOld:
                     alpha1 = relative_angle - self.pressure_angle + teeth_angles
             case "driven":
                 if self.rotation_direction == "clockwise":
-                    alpha1 = relative_angle - self.pressure_angle + teeth_angles - np.pi
+                    alpha1 = relative_angle - self.pressure_angle + teeth_angles - pi
                 else:
-                    alpha1 = relative_angle + self.pressure_angle - teeth_angles + np.pi
+                    alpha1 = relative_angle + self.pressure_angle - teeth_angles + pi
         return wrapToPi(alpha1)
 
     def compute_mesh_stiffness(self, alpha1: float, npoints: int = 100) -> float:
@@ -715,7 +805,7 @@ class spurGearOld:
         else:
             pass
 
-        khinv = 4 * (1 - self.poisson**2) / (np.pi * self.young * self.thickness)
+        khinv = 4 * (1 - self.poisson**2) / (pi * self.young * self.thickness)
         return kbinv
 
     def example_mesh_stiffness(self, t):
@@ -863,7 +953,7 @@ def main():
         name="driving_gear",
         module=3.2,
         teeth_number=31,
-        pressure_angle=20 * np.pi / 180,
+        pressure_angle=20 * pi / 180,
         thickness=0.0381 * 1e3,
         young=2.068 * 1e5,
         poisson=0.3,
@@ -894,7 +984,7 @@ def main():
         "\n\nI should include the dynamic variables (centre position, gear angle, revolution speed) missing. Fix 'compute_engagements' and missing mesh stiffnesses\n\n"
     )
 
-    # c.compute_mesh_stiffness(np.pi/4)
+    # c.compute_mesh_stiffness(pi/4)
 
     fig, ax = plt.subplots(1, 1)
     ax.set_aspect("equal")

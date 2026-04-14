@@ -6,6 +6,7 @@
 
 # from scipy.integrate import solve_ivp
 
+
 def main_debug():
     # --- crea gli oggetti gear (riporto la stessa procedura già usata) ---
     gear = gm.spurGear(name="gear")
@@ -37,11 +38,15 @@ def main_debug():
     # lm1.addInputFunction("gear", {"Fx": lambda t,x: 10*np.sin(2*np.pi*5*t)}) #forzante armonica
     # lm1.addInputFunction("gear", {"Fx": lambda t,x: 10}) #forzante step
     lm1.addInputFunction("gear", {"Fx": lambda t, x: 1 * t})  # forzante rampa
-    
-    gear.add_initial_conditions([0 for _ in range(6)]) #inizializzo condizioni iniziali a zero (pos e vel)
-    
-    pinion.add_initial_conditions([0 for _ in range(6)]) #inizializzo condizioni iniziali a zero (pos e vel)
-    
+
+    gear.add_initial_conditions(
+        [0 for _ in range(6)]
+    )  # inizializzo condizioni iniziali a zero (pos e vel)
+
+    pinion.add_initial_conditions(
+        [0 for _ in range(6)]
+    )  # inizializzo condizioni iniziali a zero (pos e vel)
+
     model1 = gmc.GenericModel(name="Model_1_Xonly")
     model1.addGear(gear)
     model1.addConstraintManager(cm1)
