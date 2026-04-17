@@ -7,18 +7,23 @@ import numpy as np
 from bokeh.plotting import figure, output_file, show
 from bokeh.models import Div
 from bokeh.layouts import gridplot, column
+from bokeh.document import Document
+from logging import getLogger
 
+logger = getLogger(__name__)
 
 class Simulation:
     simulation_number = 0
 
     def __init__(
-        self,
-        t_tot: float,
-        deltat: float,
-        model: Model,
-        method: SimulationMethod = SimulationMethod.RK45,
-    ):
+            self,
+            t_tot: float,
+            deltat: float,
+            model: Model,
+            method: SimulationMethod = SimulationMethod.RK45,):
+
+        logger.info("Setting up the simulation...")
+
         self.name = model.name + "_simulation"
         self.t_tot = t_tot
         self.deltat = deltat
@@ -27,13 +32,13 @@ class Simulation:
         self.method = method
 
     def solve(self):
+        logger.info("Solving the simulation...")
         solution = solve_ivp(
             self.model.process_equation,
             t_span=(0, self.t_tot),
             y0=self.initial_conditions,
             t_eval=np.arange(0, self.t_tot, self.deltat),
             method=self.method,
-            # vectorized=True,
         )
         self.solution = {
             "time": solution.t,
@@ -129,7 +134,8 @@ class Simulation:
         grids.append(gridplot(self.plots["outputs"], ncols=2))
         return grids, shared_x_range
 
-    def plot(self):
+    def plot(self)-> None:
+        logger.info("Creating simulation plots...")
         self.plots: dict[str, list[figure]] = {
             "states": [],
             "inputs": [],
@@ -143,3 +149,31 @@ class Simulation:
         grids, shared_x_range = self.outputs_plot(grids, shared_x_range)
         layout = column(*grids)
         show(layout)
+
+    def plot_initial_conditions(self) -> None:
+        logger.info("Creating simulation initial condition plot...")
+        output_file(f"plots/{self.name}_initial_conditions_plots.html")
+        fig = figure(match_aspect=True)
+        fig, _, _ = self.model.plot(fig=fig, state_vector=self.initial_conditions)
+        show(fig)
+
+    def animate(self, doc: Document) -> None:
+        logger.info("Creating simulation animation...")
+
+        fig = figure(match_aspect=True)
+
+        fig, sources, _ = self.model.plot(fig=fig, state_vector=self.solution["states"][:, 0])
+
+        i = 0
+        n_frames = self.solution["states"].shape[1]
+
+        def update():
+            nonlocal i
+
+            state_vector = self.solution["states"][:, i]
+            self.model.update_plot(sources, state_vector)
+
+            i = (i + 1) % n_frames
+
+        doc.add_root(fig)
+        doc.add_periodic_callback(update, 50)

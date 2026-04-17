@@ -22,3 +22,6 @@ __pycache__/
 
 # project related
 plots/
+animations/
+logs/
+graveyard/
