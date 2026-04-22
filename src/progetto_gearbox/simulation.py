@@ -5,9 +5,10 @@ from progetto_gearbox.enums.simulation_enums import SimulationMethod
 from scipy.integrate import solve_ivp
 import numpy as np
 from bokeh.plotting import figure, output_file, show
-from bokeh.models import Div
-from bokeh.layouts import gridplot, column
+from bokeh.models import Div, Select, Button
+from bokeh.layouts import gridplot, column, row
 from bokeh.document import Document
+from bokeh.server.server import Server
 from logging import getLogger
 
 logger = getLogger(__name__)
@@ -22,17 +23,18 @@ class Simulation:
             model: Model,
             method: SimulationMethod = SimulationMethod.RK45,):
 
-        logger.info("Setting up the simulation...")
-
         self.name = model.name + "_simulation"
+        logger.info("Initializing simulation '%s'...", self.name)
         self.t_tot = t_tot
         self.deltat = deltat
         self.model = model
         self.initial_conditions = model.initial_conditions
         self.method = method
+        logger.debug("Simulation '%s' initialized", self.name)
 
     def solve(self):
-        logger.info("Solving the simulation...")
+        logger.info("Solving simulation '%s'...", self.name)
+        logger.debug("Integrating process equation...")
         solution = solve_ivp(
             self.model.process_equation,
             t_span=(0, self.t_tot),
@@ -40,20 +42,27 @@ class Simulation:
             t_eval=np.arange(0, self.t_tot, self.deltat),
             method=self.method,
         )
+        logger.debug("Integration completed...")
+        logger.debug("Storing simulation solution...")
         self.solution = {
             "time": solution.t,
             "states": solution.y,
             "inputs": self.model.get_inputs(solution.t),
             "outputs": self.model.get_outputs(solution.t, solution.y),
         }
+        logger.debug("Simulation solution stored.")
+        logger.info("Simulation '%s' solved.", self.name)
+
 
     def states_plot(self, grids: list, shared_x_range):
+        logger.debug("Creating states plots...")
         grids.append(
             Div(text=f"<h2>STATE PLOTS</h2>"),
         )
         for state_idx, (state, state_uom) in enumerate(
             zip(self.model.state_names, self.model.state_uoms)
         ):
+            logger.debug("Creating plot for state '%s'...", state)
             kwargs = dict(
                 title=f"State {state.capitalize()}",
                 x_axis_label="Time [s]",
@@ -73,16 +82,20 @@ class Simulation:
             p.line(x=self.solution["time"], y=self.solution["states"][state_idx, :])
 
             self.plots["states"].append(p)
+            logger.debug("Plot for state '%s' created.", state)
         grids.append(gridplot(self.plots["states"], ncols=2))
+        logger.debug("States plots created.")
         return grids, shared_x_range
 
     def inputs_plot(self, grids: list, shared_x_range):
+        logger.debug("Creating inputs plots...")
         grids.append(
             Div(text=f"<h2>INPUT PLOTS</h2>"),
         )
         for input_idx, (input_name, input_uom) in enumerate(
             zip(self.model.input_names, self.model.input_uoms)
         ):
+            logger.debug("Creating plot for input '%s'...", input_name)
             kwargs = dict(
                 title=f"Input {input_name.capitalize()}",
                 x_axis_label="Time [s]",
@@ -102,16 +115,22 @@ class Simulation:
             p.line(x=self.solution["time"], y=self.solution["inputs"][input_idx, :])
 
             self.plots["inputs"].append(p)
+            logger.debug("Plot for input '%s' created.", input_name)
+
         grids.append(gridplot(self.plots["inputs"], ncols=2))
+        logger.debug("Inputs plots created.")
         return grids, shared_x_range
 
     def outputs_plot(self, grids: list, shared_x_range):
+        logger.debug("Creating outputs plots...")
         grids.append(
             Div(text=f"<h2>OUTPUT PLOTS</h2>"),
         )
         for output_idx, (output, output_uom) in enumerate(
             zip(self.model.output_names, self.model.output_uoms)
         ):
+            logger.debug("Creating plot for output '%s'...", output)
+
             kwargs = dict(
                 title=f"Output {output.capitalize()}",
                 x_axis_label="Time [s]",
@@ -131,11 +150,14 @@ class Simulation:
             p.line(x=self.solution["time"], y=self.solution["outputs"][output_idx, :])
 
             self.plots["outputs"].append(p)
+            logger.debug("Plot for output '%s' created.", output)
+
         grids.append(gridplot(self.plots["outputs"], ncols=2))
+        logger.debug("Outputs plots created.")
         return grids, shared_x_range
 
     def plot(self)-> None:
-        logger.info("Creating simulation plots...")
+        logger.info("Creating plots for simulation '%s'...", self.name)
         self.plots: dict[str, list[figure]] = {
             "states": [],
             "inputs": [],
@@ -149,31 +171,105 @@ class Simulation:
         grids, shared_x_range = self.outputs_plot(grids, shared_x_range)
         layout = column(*grids)
         show(layout)
+        logger.info("Simulation plots created for '%s'.", self.name)
 
     def plot_initial_conditions(self) -> None:
-        logger.info("Creating simulation initial condition plot...")
+        logger.info("Creating simulation initial condition plot for '%s'...", self.name)
         output_file(f"plots/{self.name}_initial_conditions_plots.html")
         fig = figure(match_aspect=True)
         fig, _, _ = self.model.plot(fig=fig, state_vector=self.initial_conditions)
         show(fig)
+        logger.info("Simulation initial condition plot created for '%s'.", self.name)
 
-    def animate(self, doc: Document) -> None:
+    def animate(self, doc: Document, server: Server=None, frequency_ms: int = 50, playback_speed: float = "1x", loop: bool = True) -> None:
         logger.info("Creating simulation animation...")
 
-        fig = figure(match_aspect=True)
-
-        fig, sources, _ = self.model.plot(fig=fig, state_vector=self.solution["states"][:, 0])
-
-        i = 0
+        states = self.solution["states"]
+        time_vector = self.solution["time"]
         n_frames = self.solution["states"].shape[1]
 
-        def update():
-            nonlocal i
+        fig = figure(match_aspect=True)
+        fig, sources, _ = self.model.plot(fig=fig, state_vector=self.solution["states"][:, 0])
 
-            state_vector = self.solution["states"][:, i]
+        speed_options = ["0.05x","0.1x","0.5x", "1x", "2x", "5x", "10x"]
+        speed_values = [0.05, 0.1, 0.5, 1.0, 2.0, 5.0, 10.0]
+        
+        if playback_speed not in speed_options:
+            raise ValueError(f"Invalid playback speed '{playback_speed}'. Valid options are: '{', '.join(speed_options)}'.")
+        
+        speed_select = Select(
+            title="Speed",
+            value=playback_speed,
+            options=speed_options,
+            width=100,
+        )
+        play_pause_button = Button(label="Pause", width=80)
+        stop_button = Button(label="Stop server", width=120)
+
+        is_playing = True
+        current_speed_idx = speed_options.index(playback_speed)
+        current_speed = speed_values[current_speed_idx]
+
+        current_time = 0.0
+        t_end = float(time_vector[-1])
+        time_div = Div(text=f"Time: {current_time:.2f} / {t_end:.2f} s", width=200)
+        def _render() -> None:
+            i = int(current_time / self.deltat)
+            i = max(0, min(i, n_frames - 1))
+            state_vector = states[:, i]
             self.model.update_plot(sources, state_vector)
 
-            i = (i + 1) % n_frames
+            time_div.text = f"Time: {current_time:.2f} / {t_end:.2f} s"
 
-        doc.add_root(fig)
-        doc.add_periodic_callback(update, 50)
+        def _on_speed_change(attr: str, old: str, new: str) -> None:
+            nonlocal current_speed, speed_options, speed_values
+            current_speed_idx = speed_options.index(new)
+            current_speed = speed_values[current_speed_idx]
+
+        def _on_play_pause() -> None:
+            nonlocal is_playing
+            is_playing = not is_playing
+            play_pause_button.label = "Pause" if is_playing else "Play"
+
+        def _on_stop():
+            logger.info("Shutting down server and exiting...")
+
+            if server is not None:
+                def shutdown():
+                    server.stop()
+                    server.io_loop.stop()  # <-- questo chiude davvero lo script
+
+                server.io_loop.add_callback(shutdown)
+            
+                        
+
+        speed_select.on_change("value", _on_speed_change)
+        play_pause_button.on_click(_on_play_pause)
+        stop_button.on_click(_on_stop)
+
+        def update() -> None:
+            nonlocal current_time, is_playing
+
+            if not is_playing:
+                return
+
+            current_time += current_speed * frequency_ms / 1000.0
+
+            if current_time > t_end:
+                if loop:
+                    current_time = 0.0
+                else:
+                    current_time = t_end
+                    is_playing = False
+                    play_pause_button.label = "Play"
+
+            _render()
+        
+        controls = row(play_pause_button, speed_select, stop_button)
+        layout = column(controls, fig, time_div)
+
+        doc.add_root(layout)
+        doc.add_periodic_callback(update, frequency_ms)
+
+        _render()
+        logger.info("Simulation animation created.")

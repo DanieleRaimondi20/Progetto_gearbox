@@ -18,7 +18,8 @@ def create_gear() -> SpurGear:
     gear = SpurGear(name="gear")
     gear.set_material(young=2.068 * 1e5, poisson=0.3)
     gear.set_geometry(module=3.2,teeth_number=31,thickness=0.0381 * 1e3)
-    gear.get_state_space(inertia_x=1,inertia_y=1,inertia_t=0.5)
+    gear.set_inertias(inertia_x=1,inertia_y=1,inertia_t=0.5)
+    gear.get_state_space()
     return gear
 
 def simulate_gear() -> Simulation:
@@ -41,34 +42,11 @@ def simulate_gear() -> Simulation:
     gear_simulation.plot()
     return gear_simulation
 
-def create_pinion() -> SpurGear:
-    
-    pinion_params = {
-        "name": "pinion",
-        "input_funcs": {
-                    "x_force": step(),
-                    "y_force": ramp(),
-                    "t_torque": sinusoidal(frequency=2)},
-        "init_conditions_dict": {},
-        "inertia_x": 0.5,
-        "inertia_y": 0.5, 
-        "inertia_t": 2,
-        "module": 3.2,
-        "teeth_number": 19,
-        "pressure_angle": deg2rad(20),
-        "thickness": 0.0381 * 1e3,
-        "young": 2.068 * 1e5,
-        "poisson": 0.3,}
-    
-    pinion = SpurGear(**pinion_params)
-    # pinion.plot(**gear.initial_conditions)
-    return pinion
 
-
-def main(doc=None):
+def main(doc=None, server=None):
     gear_simulation = simulate_gear()
     gear_simulation.plot_initial_conditions()
-    # gear_simulation.animate(doc=doc)
+    gear_simulation.animate(doc=doc, server=server)
 
 
 if __name__ == "__main__":

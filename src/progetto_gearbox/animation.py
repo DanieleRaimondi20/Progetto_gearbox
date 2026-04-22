@@ -3,7 +3,8 @@ from pathlib import Path
 from logging import getLogger
 from progetto_gearbox.logging.logger_configuration import setup_logger
 from bokeh.server.server import Server
-from progetto_gearbox.demos.gear_demo import main
+# from progetto_gearbox.demos.gear_demo import main
+from progetto_gearbox.demos.gearbox_demo import main
 
 
 
@@ -13,7 +14,7 @@ setup_logger(str(log_file))
 logger = getLogger(__name__)
 
 def bkapp(doc):
-    main(doc=doc)
+    main(doc=doc, server=server)
 
 server = Server({'/': bkapp})
 server.start()
