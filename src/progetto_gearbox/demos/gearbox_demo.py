@@ -44,7 +44,12 @@ def create_gearbox():
 def main(doc=None, server=None):
     gearbox = create_gearbox()
     driving_gear_initial_conditions = {
-        "t_pos": 0
+        "x_pos": 0,
+        "x_vel": 0,
+        "y_pos": 0,
+        "y_vel": 0,
+        "t_pos": 0,
+        "t_vel": 0
     }
     # driven_pinion_initial_conditions = gearbox.get_driven_gear_initial_conditions_from(
     #     driven_gear_name="driven_pinion", 
@@ -53,7 +58,12 @@ def main(doc=None, server=None):
     #     gamma=0.0)
     
     driven_pinion_initial_conditions = {
-        "x_pos": 80 * 1e-3, "y_pos": 0, "t_pos": 0
+        "x_pos": 80 * 1e-3,
+        "x_vel": 0,
+        "y_pos": 0,
+        "y_vel": 0,
+        "t_pos": 0,
+        "t_vel": 0
     }
 
     initial_conditions = {
@@ -63,16 +73,18 @@ def main(doc=None, server=None):
 
     gearbox.set_initial_conditions(init_conditions_dict=initial_conditions)
 
+    
+    # input_functions = {"driving_gear": {"t_torque": PD(kp=100, pos_set = 10, pos_idx = gearbox.get_state_idx("driving_gear_t_vel"))}}
+    gearbox.add_proportional_derivative_feedback(gear_name="driving_gear", dof = "t", kp = 0, kd = 100)
     input_functions = {
         "driving_gear": {
-            # "t_torque": step(step_value=1,t_start=0.5, t_end=2.5),
-            "t_torque": constant(value = 1)
+            # "t_torque": constant(value = 0.1)
+            "t_vel_ref": step(step_value = 1, t_start = 0.1)
             },
         "driven_pinion": {
-            "t_torque": ramp(angular_coefficient=2)
+            "t_torque": constant(value=1)
         }
     }
-    # input_functions = {"driving_gear": {"t_torque": PD(kp=100, pos_set = 10, pos_idx = gearbox.get_state_idx("driving_gear_t_vel"))}}
     gearbox.set_input_functions(input_func_dict=input_functions)
     gearbox.get_state_space()
     
@@ -85,8 +97,9 @@ def main(doc=None, server=None):
         deltat=0.00005,
         model=gearbox,
     )
-    gearbox_simulation.plot_initial_conditions()
+    
     gearbox_simulation.solve()
+    gearbox_simulation.plot_initial_conditions()
     gearbox_simulation.plot()
     gearbox_simulation.animate(doc=doc, server=server)
 

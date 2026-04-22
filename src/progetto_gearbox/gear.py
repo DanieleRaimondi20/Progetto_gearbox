@@ -10,15 +10,20 @@ from numpy import pi
 import numpy as np
 from numpy.typing import NDArray
 from scipy.linalg import block_diag
-# import numpy.typing as npt
-# import matplotlib.pyplot as plt
-# import scipy as sc
-from bokeh.plotting import figure, figure, output_file
+from bokeh.plotting import figure, output_file, show
 from bokeh.models import ColumnDataSource, GlyphRenderer
  
 logger = getLogger(__name__)
 
 class SpurGear(Model):
+
+    def __init__(self, name: str = "gear") -> None:
+        super().__init__(name)
+        self._material_set = False
+        self._geometry_set = False
+        self._diameters_and_radiuses_set = False
+        self._alpha_angles_set = False
+        self._state_space_set = False
     
     def set_geometry(self, module: float = 0.010, teeth_number: int = 20, pressure_angle: float = np.deg2rad(20), thickness: float = 0.010) -> None:
         logger.debug("Setting gear geometry...")
@@ -30,11 +35,13 @@ class SpurGear(Model):
         self.teeth_number = teeth_number
         self.pressure_angle = pressure_angle
         self.thickness = thickness
-        self.get_diameters_and_radiuses()
-        self.get_alpha_angles()
+        self._get_diameters_and_radiuses()
+        self._get_alpha_angles()
+        self._geometry_set = True
     
-    def set_material(self, young: float = 200000, poisson: float = 0.3, density: float = 7900) -> None:
+    def set_material(self, young: float = 200000.0, poisson: float = 0.3, density: float = 7900.0) -> None:
         logger.debug("Setting gear material...")
+        assert self._geometry_set, "Before setting the material, geometry must be set."
         assert isinstance(young, float) and young > 0, "SpurGear 'young' must be a positive 'float'"
         assert isinstance(poisson, float) and poisson > 0, "SpurGear 'module' must be a positive 'float'"
         self.young = young
@@ -44,46 +51,11 @@ class SpurGear(Model):
         self.inertia = {"x": mass, 
                         "y": mass, 
                         "t": 1/2 * mass * self.radiuses["root"] **2}
+        self._material_set = True
     
-    def get_diameters_and_radiuses(self) -> None:
-        logger.debug("Setting gear useful diameters and radiuses...")
-        pitch_diameter = self.teeth_number * self.module
-        self.diameters = {
-            "pitch": pitch_diameter,
-            "base": pitch_diameter * np.cos(self.pressure_angle),
-            "addendum": pitch_diameter + 2 * self.module,
-            "dedendum": pitch_diameter - 2 * self.module,
-            "root": pitch_diameter - 2.5 * self.module,
-        }
-        self.root_greater_than_base = self.diameters["root"] > self.diameters["base"]
-        self.radiuses = {name: diameter / 2 for name, diameter in self.diameters.items()}
-    
-    def get_alpha_angles(self) -> None:
-        logger.debug("Setting gear alpha angles...")
-        alpha2 = (
-            pi / (2 * self.teeth_number)
-            + np.tan(self.pressure_angle)
-            - self.pressure_angle
-        )
-        if self.root_greater_than_base:
-            self.alpha = {
-                2: alpha2,
-                4: alpha2 - self.compute_psi_angle(self.diameters["root"]),
-                5: self.compute_phi_angle(self.diameters["root"]) - alpha2,
-            }
-            self.angle_at_root = 2 * self.alpha[4]
-        else:
-            self.alpha = {
-                2: alpha2,
-                3: np.arcsin(
-                    self.radiuses["base"] / self.radiuses["root"] * np.sin(alpha2)
-                ),
-            }
-            self.angle_at_root = 2 * self.alpha[3]
-        self.angle_at_base = 2 * alpha2
-
-    def get_state_space(self):
+    def get_state_space(self) -> None:
         logger.info("Setting up the state space model...")
+        assert self._material_set, "Before setting state space, you should set the material"
         self.state_names = ["x_pos", "x_vel", "y_pos", "y_vel", "t_pos", "t_vel"]
         self.state_uoms = ["m", "m/s", "m", "m/s", "rad", "rad/s"]
         
@@ -109,22 +81,118 @@ class SpurGear(Model):
         self.feedthrough_matrix = np.zeros((self.no, self.ni))
         self.check_matrices_dimensions()
         self.initial_conditions = np.full(self.ns,None)
+        self._state_space_set = True
+
+    def plot(
+            self,
+            fig: figure,
+            state_vector=np.zeros((6,1)),
+            engaged_teeth=None,
+            n_points_involutes: int = 10,
+            n_points_tips: int = 5,
+        ) -> tuple[figure, ColumnDataSource, GlyphRenderer]:
+        
+        assert self._state_space_set, "You should set the gear state space model before plotting"
+        x_pos = state_vector[self.state_names.index("x_pos")]
+        y_pos = state_vector[self.state_names.index("y_pos")]
+        t_pos = state_vector[self.state_names.index("t_pos")]
+
+        fig, teeth_source, teeth_renderer = self._teeth_plot(
+            fig=fig,
+            x_pos=x_pos,
+            y_pos=y_pos,
+            t_pos=t_pos,
+            engaged_teeth=engaged_teeth,
+            n_points_involutes=n_points_involutes,
+            n_points_tips=n_points_tips,
+        )
+
+        fig, root_source, root_renderer = self._teeth_root_plot(
+            fig=fig,
+            x_pos=x_pos,
+            y_pos=y_pos,
+        )
+
+        fig, ref_source, ref_renderer = self._reference_circles_plot(
+            fig=fig,
+            x_pos=x_pos,
+            y_pos=y_pos,
+        )
+
+        sources = {
+            "teeth": teeth_source,
+            "root": root_source,
+            "reference_circles": ref_source,
+        }
+
+        renderers = {
+            "teeth": teeth_renderer,
+            "root": root_renderer,
+            "reference_circles": ref_renderer,
+        }
+
+        return fig, sources, renderers
 
     
+
+
+
+
+
+
+    def _get_diameters_and_radiuses(self) -> None:
+        logger.debug("Setting gear useful diameters and radiuses...")
+        pitch_diameter = self.teeth_number * self.module
+        self.diameters = {
+            "pitch": pitch_diameter,
+            "base": pitch_diameter * np.cos(self.pressure_angle),
+            "addendum": pitch_diameter + 2 * self.module,
+            "dedendum": pitch_diameter - 2 * self.module,
+            "root": pitch_diameter - 2.5 * self.module,
+        }
+        self.root_greater_than_base = self.diameters["root"] > self.diameters["base"]
+        self.radiuses = {name: diameter / 2 for name, diameter in self.diameters.items()}
+        self._diameters_and_radiuses_set = True
     
-    def compute_phi_angle(self, diameter: float | NDArray) -> float | NDArray:
+    def _get_alpha_angles(self) -> None:
+        logger.debug("Setting gear alpha angles...")
+        assert self._diameters_and_radiuses_set, "Before setting alpha angles, you should set diameters and radiuses"
+        alpha2 = (
+            pi / (2 * self.teeth_number)
+            + np.tan(self.pressure_angle)
+            - self.pressure_angle
+        )
+        if self.root_greater_than_base:
+            self.alpha = {
+                2: alpha2,
+                4: alpha2 - self._compute_psi_angle(self.diameters["root"]),
+                5: self._compute_phi_angle(self.diameters["root"]) - alpha2,
+            }
+            self.angle_at_root = 2 * self.alpha[4]
+        else:
+            self.alpha = {
+                2: alpha2,
+                3: np.arcsin(
+                    self.radiuses["base"] / self.radiuses["root"] * np.sin(alpha2)
+                ),
+            }
+            self.angle_at_root = 2 * self.alpha[3]
+        self.angle_at_base = 2 * alpha2
+        self._alpha_angles_set = True
+
+    def _compute_phi_angle(self, diameter: float | NDArray) -> float | NDArray:
         return np.sqrt(diameter**2 / self.diameters["base"] ** 2 - 1)
 
-    def compute_csi_angle(self, diameter: float | NDArray) -> float | NDArray:
+    def _compute_csi_angle(self, diameter: float | NDArray) -> float | NDArray:
         return np.arcsin(
-            self.compute_phi_angle(diameter)
-            / np.sqrt(1 + self.compute_phi_angle(diameter) ** 2)
+            self._compute_phi_angle(diameter)
+            / np.sqrt(1 + self._compute_phi_angle(diameter) ** 2)
         )
     
-    def compute_psi_angle(self, diameter: float | NDArray) -> float | NDArray:
-        return self.compute_phi_angle(diameter) - self.compute_csi_angle(diameter)
+    def _compute_psi_angle(self, diameter: float | NDArray) -> float | NDArray:
+        return self._compute_phi_angle(diameter) - self._compute_csi_angle(diameter)
 
-    def get_plot_figure(self, fig: figure | None = None, animation: bool = False) -> figure:
+    def _get_plot_figure(self, fig: figure | None = None, animation: bool = False) -> figure:
         if not fig:
             if animation:
                 output_file(f"plots/gear_{self.name}_plot.html")
@@ -133,18 +201,18 @@ class SpurGear(Model):
             fig = figure(match_aspect=True)
         return fig
 
-    def get_engagement_array(self, engaged_teeth: NDArray[np.bool] | None = None):
+    def _get_engagement_array(self, engaged_teeth: NDArray[np.bool] | None = None):
         if not engaged_teeth:
             engaged_teeth = np.zeros(self.teeth_number,dtype=np.bool)
             engaged_teeth[0] = True
         return engaged_teeth
 
-    def get_teeth_centre_angle(self, gear_angle: float | NDArray = 0) -> NDArray:
+    def _get_teeth_centre_angle(self, gear_angle: float | NDArray = 0) -> NDArray:
         pitch_angle = 2 * pi / self.teeth_number
         pitch_angle_vector = np.arange(self.teeth_number) * pitch_angle
         return wrapToPi(gear_angle + pitch_angle_vector)
     
-    def get_teeth_involutes(self, teeth_centre_angle: NDArray, n_points: int = 10) -> dict[str, NDArray]:
+    def _get_teeth_involutes(self, teeth_centre_angle: NDArray, n_points: int = 10) -> dict[str, NDArray]:
         if self.root_greater_than_base:
             diameters = np.linspace(
                 self.diameters["root"], self.diameters["addendum"], n_points
@@ -156,25 +224,25 @@ class SpurGear(Model):
         diameters = np.tile(diameters, (self.teeth_number,1))
         right_radiuses = diameters / 2
         left_radiuses = np.fliplr(right_radiuses)
-        right_angles = self.compute_psi_angle(diameters) - self.angle_at_base / 2
+        right_angles = self._compute_psi_angle(diameters) - self.angle_at_base / 2
         left_angles = - np.fliplr(right_angles)
         return {"left_radiuses": left_radiuses, "left_angles": wrapToPi(left_angles + teeth_centre_angle), "right_radiuses": right_radiuses, "right_angles": wrapToPi(right_angles + teeth_centre_angle)}
     
-    def get_teeth_sides(self, teeth_centre_angle: NDArray):
+    def _get_teeth_sides(self, teeth_centre_angle: NDArray):
         return {"left_radiuses": np.tile(self.radiuses["root"],(self.teeth_number,1)), 
                 "left_angles": wrapToPi(self.alpha[3] + teeth_centre_angle), 
                 "right_radiuses": np.tile(self.radiuses["root"],(self.teeth_number,1)), 
                 "right_angles": wrapToPi(-self.alpha[3] + teeth_centre_angle)}
 
-    def get_teeth_tips(self, teeth_centre_angle: NDArray, n_points: int = 5):
-        right_angle = self.compute_psi_angle(self.diameters["addendum"]) - self.angle_at_base / 2
+    def _get_teeth_tips(self, teeth_centre_angle: NDArray, n_points: int = 5):
+        right_angle = self._compute_psi_angle(self.diameters["addendum"]) - self.angle_at_base / 2
         left_angle = - right_angle
         angles = np.linspace(right_angle,left_angle,n_points+1,endpoint=False)[1:]
         angles = np.reshape(angles, (1,-1)) + teeth_centre_angle
         radiuses = np.full((self.teeth_number,n_points),self.radiuses["addendum"])
         return {"radiuses": radiuses, "angles": angles}
 
-    def build_teeth_data(
+    def _build_teeth_data(
             self,
             x_pos: float = 0,
             y_pos: float = 0,
@@ -184,11 +252,11 @@ class SpurGear(Model):
             n_points_tips: int = 5,
         ) -> dict[str, list]:
 
-        engaged_teeth = self.get_engagement_array(engaged_teeth=engaged_teeth)
+        engaged_teeth = self._get_engagement_array(engaged_teeth=engaged_teeth)
 
-        teeth_centre_angle = np.reshape(self.get_teeth_centre_angle(t_pos), (-1, 1))
-        teeth_involutes = self.get_teeth_involutes(teeth_centre_angle=teeth_centre_angle, n_points=n_points_involutes)
-        teeth_tips = self.get_teeth_tips(teeth_centre_angle=teeth_centre_angle, n_points=n_points_tips)
+        teeth_centre_angle = np.reshape(self._get_teeth_centre_angle(t_pos), (-1, 1))
+        teeth_involutes = self._get_teeth_involutes(teeth_centre_angle=teeth_centre_angle, n_points=n_points_involutes)
+        teeth_tips = self._get_teeth_tips(teeth_centre_angle=teeth_centre_angle, n_points=n_points_tips)
 
         teeth_radiuses = np.hstack([
             teeth_involutes["right_radiuses"],
@@ -202,7 +270,7 @@ class SpurGear(Model):
         ])
 
         if not self.root_greater_than_base:
-            teeth_sides = self.get_teeth_sides(teeth_centre_angle=teeth_centre_angle)
+            teeth_sides = self._get_teeth_sides(teeth_centre_angle=teeth_centre_angle)
             teeth_radiuses = np.hstack([teeth_radiuses, teeth_sides["left_radiuses"], teeth_sides["right_radiuses"]])
             teeth_angles = np.hstack([teeth_angles, teeth_sides["left_angles"], teeth_sides["right_angles"]])
 
@@ -216,7 +284,7 @@ class SpurGear(Model):
             "line_color": ["blue" if engaged_teeth[i] else "black" for i in range(self.teeth_number)],
         }
 
-    def teeth_plot(
+    def _teeth_plot(
             self,
             fig: figure,
             x_pos: float = 0,
@@ -227,7 +295,7 @@ class SpurGear(Model):
             n_points_tips: int = 5,
         ) -> tuple[figure, ColumnDataSource, GlyphRenderer]:
 
-        data = self.build_teeth_data(
+        data = self._build_teeth_data(
             x_pos=x_pos, y_pos=y_pos, t_pos=t_pos,
             engaged_teeth=engaged_teeth,
             n_points_involutes=n_points_involutes,
@@ -243,7 +311,7 @@ class SpurGear(Model):
         )
         return fig, source, renderer
 
-    def teeth_root_plot(
+    def _teeth_root_plot(
             self,
             fig: figure,
             x_pos: float = 0,
@@ -268,7 +336,7 @@ class SpurGear(Model):
 
         return fig, source, renderer
     
-    def reference_circles_plot(
+    def _reference_circles_plot(
             self,
             fig: figure,
             x_pos: float = 0,
@@ -296,57 +364,8 @@ class SpurGear(Model):
         )
 
         return fig, source, renderer
-    
-    def plot(
-            self,
-            fig: figure,
-            state_vector=np.zeros((6,1)),
-            engaged_teeth=None,
-            n_points_involutes: int = 10,
-            n_points_tips: int = 5,
-        ) -> tuple[figure, ColumnDataSource, GlyphRenderer]:
-        
-        x_pos = state_vector[self.state_names.index("x_pos")]
-        y_pos = state_vector[self.state_names.index("y_pos")]
-        t_pos = state_vector[self.state_names.index("t_pos")]
-
-        fig, teeth_source, teeth_renderer = self.teeth_plot(
-            fig=fig,
-            x_pos=x_pos,
-            y_pos=y_pos,
-            t_pos=t_pos,
-            engaged_teeth=engaged_teeth,
-            n_points_involutes=n_points_involutes,
-            n_points_tips=n_points_tips,
-        )
-
-        fig, root_source, root_renderer = self.teeth_root_plot(
-            fig=fig,
-            x_pos=x_pos,
-            y_pos=y_pos,
-        )
-
-        fig, ref_source, ref_renderer = self.reference_circles_plot(
-            fig=fig,
-            x_pos=x_pos,
-            y_pos=y_pos,
-        )
-
-        sources = {
-            "teeth": teeth_source,
-            "root": root_source,
-            "reference_circles": ref_source,
-        }
-
-        renderers = {
-            "teeth": teeth_renderer,
-            "root": root_renderer,
-            "reference_circles": ref_renderer,
-        }
-
-        return fig, sources, renderers
-
-    def update_teeth_plot(
+       
+    def _update_teeth_plot(
             self,
             source: ColumnDataSource,
             x_pos: float = 0,
@@ -357,14 +376,14 @@ class SpurGear(Model):
             n_points_tips: int = 5,
         ) -> None:
         
-        source.data = self.build_teeth_data(
+        source.data = self._build_teeth_data(
             x_pos=x_pos, y_pos=y_pos, t_pos=t_pos,
             engaged_teeth=engaged_teeth,
             n_points_involutes=n_points_involutes,
             n_points_tips=n_points_tips,
         )
 
-    def update_teeth_root_plot(
+    def _update_teeth_root_plot(
             self,
             source: ColumnDataSource,
             x_pos: float = 0,
@@ -377,7 +396,7 @@ class SpurGear(Model):
             radius=[self.radiuses["root"]],
         )
 
-    def update_reference_circles_plot(
+    def _update_reference_circles_plot(
             self,
             source: ColumnDataSource,
             x_pos: float = 0,
@@ -391,7 +410,7 @@ class SpurGear(Model):
             radius=source.data["radius"],
         )
 
-    def update_plot(
+    def _update_plot(
             self,
             sources: dict,
             state_vector: NDArray,
@@ -403,7 +422,7 @@ class SpurGear(Model):
         y_pos = state_vector[self.state_names.index("y_pos")]
         t_pos = state_vector[self.state_names.index("t_pos")]
 
-        self.update_teeth_plot(
+        self._update_teeth_plot(
             source=sources["teeth"],
             x_pos=x_pos,
             y_pos=y_pos,
@@ -413,13 +432,13 @@ class SpurGear(Model):
             n_points_tips=n_points_tips,
         )
 
-        self.update_teeth_root_plot(
+        self._update_teeth_root_plot(
             source=sources["root"],
             x_pos=x_pos,
             y_pos=y_pos,
         )
 
-        self.update_reference_circles_plot(
+        self._update_reference_circles_plot(
             source=sources["reference_circles"],
             x_pos=x_pos,
             y_pos=y_pos,
@@ -427,6 +446,13 @@ class SpurGear(Model):
 
 
     
-
+if __name__ == "__main__":
+    fig = figure(match_aspect=True)
+    gear = SpurGear()
+    gear.set_geometry()
+    gear.set_material()
+    gear.get_state_space()
+    fig, sources, renders = gear.plot(fig=fig)
+    show(fig)
 
     

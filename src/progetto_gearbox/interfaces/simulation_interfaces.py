@@ -86,7 +86,7 @@ class Model(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def update_plot(sources: ColumnDataSource, state_vector: NDArray):
+    def _update_plot(sources: ColumnDataSource, state_vector: NDArray):
         raise NotImplementedError
 
     def set_initial_conditions(self, init_conditions_dict: dict[str, float] = {}):
@@ -102,8 +102,8 @@ class Model(ABC):
                 logger.debug("Initial condition for dof '%s' set...",state_name)
                 self.initial_conditions[state_idx] = init_conditions_dict[state_name]
             else:
-                logger.warning("Initial condition for dof '%s' was not assigned in model '%s'. Initialising it to 0.", state_name, self.name)
-                self.initial_conditions[state_idx] = 0
+                logger.warning("Initial condition for dof '%s' was not assigned in model '%s'. Keeping a 'None'.", state_name, self.name)
+                self.initial_conditions[state_idx] = None
         
         logger.debug("Initial conditions for model '%s' set.", self.name)
 

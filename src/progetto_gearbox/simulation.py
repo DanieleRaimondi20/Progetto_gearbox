@@ -34,6 +34,7 @@ class Simulation:
 
     def solve(self):
         logger.info("Solving simulation '%s'...", self.name)
+        self._assess_model()        
         logger.debug("Integrating process equation...")
         solution = solve_ivp(
             self.model.process_equation,
@@ -53,6 +54,38 @@ class Simulation:
         logger.debug("Simulation solution stored.")
         logger.info("Simulation '%s' solved.", self.name)
 
+    def _assess_model(self) -> None:
+        logger.info("Assessing model status for simulation...")
+        ns = self.model.ns
+        no = self.model.no
+        ni = self.model.ni
+        assert len(self.model.state_names) == ns, "Model state names don't match with states."
+        assert len(self.model.state_uoms) == ns, "Model state uoms don't match with states."
+        assert len(self.model.input_names) == ni, "Model input names don't match with inputs."
+        assert len(self.model.input_uoms) == ni, "Model input uoms don't match with inputs."
+        assert len(self.model.input_funcs) == ni, "Model input functions don't match with inputs."
+        assert len(self.model.output_names) == no, "Model output names don't match with outputs."
+        assert len(self.model.output_uoms) == no, "Model output uoms don't match with outputs."
+        assert self.model.state_transition_matrix.shape == (ns,ns), "State transition matrix shape doesn't match the number of states."
+        assert self.model.input_matrix.shape == (ns,ni), "Input matrix shape doesn't match the number of states and inputs."
+        assert self.model.output_matrix.shape == (no,ns), "Output matrix shape doesn't match the number of outputs and states."
+        assert self.model.feedthrough_matrix.shape == (no,ni), "Feedthrough matrix shape doesn't match the number of outputs and inputs."
+        if self.model.non_linear_process is not None:
+            assert self.model.non_linear_process(0, np.empty((ns,1)), np.empty((ni,1))).shape == (ns,1), "Non linear process function doesn't match the number of states or inputs."
+        if self.model.non_linear_output is not None:
+            assert self.model.non_linear_output(0, np.empty((ns,1)), np.empty((ni,1))).shape == (no,1), "Non linear output function doesn't match the number of outputs, states or inputs."
+        assert self.model.initial_conditions.shape == (ns,), "Initial conditions shape doesn't match the number of states."
+        init_condition_clause = False
+        for init_cond, state_name in zip(self.model.initial_conditions, self.model.state_names):
+            if init_cond is None:
+                init_condition_clause = True
+                logger.error("Initial condition for state %s in model %s was not provided.", state_name, self.model.name)
+
+        assert init_condition_clause == False, "Initial conditions were not complete. See above the missing ones."
+        
+            
+        
+        logger.info("Model status for simulation assessed.")
 
     def states_plot(self, grids: list, shared_x_range):
         logger.debug("Creating states plots...")
@@ -217,7 +250,7 @@ class Simulation:
             i = int(current_time / self.deltat)
             i = max(0, min(i, n_frames - 1))
             state_vector = states[:, i]
-            self.model.update_plot(sources, state_vector)
+            self.model._update_plot(sources, state_vector)
 
             time_div.text = f"Time: {current_time:.2f} / {t_end:.2f} s"
 
