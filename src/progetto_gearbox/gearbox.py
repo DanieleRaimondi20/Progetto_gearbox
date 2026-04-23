@@ -104,6 +104,10 @@ class GearBox(Model):
         input_name = dof + input_suffix
         gear.remove_input(input_name=input_name)
 
+        output_name = input_name + "_feedback"
+        output_uom = "Nm" if dof is "t" else "_torque"
+        output_matrix_row = np.zeros((1,gear.ns))
+        feedthrough_matrix_row = np.zeros((1,gear.ni))
         vel_state_name = dof + "_vel"
         vel_state_idx = gear.get_state_idx(state_name=vel_state_name)
 
@@ -123,6 +127,8 @@ class GearBox(Model):
                 feedthrough_matrix_column=np.zeros((gear.no,1))
                 )
             gear.state_transition_matrix[vel_state_idx,pos_state_idx] -= kp/gear.inertia[dof]
+            output_matrix_row[0,pos_state_idx] = - kp
+            feedthrough_matrix_row = np.concatenate([feedthrough_matrix_row, np.array([[kp]])],axis=1)
             logger.debug("Proportional feedback added...")
         
         if kd:
@@ -139,7 +145,11 @@ class GearBox(Model):
                 feedthrough_matrix_column=np.zeros((gear.no,1))
                 )
             gear.state_transition_matrix[vel_state_idx,vel_state_idx] -= kd/gear.inertia[dof]
+            output_matrix_row[0,vel_state_idx] = - kd
+            feedthrough_matrix_row = np.concatenate([feedthrough_matrix_row, np.array([[kd]])],axis=1)
             logger.debug("Derivative feedback added...")
+        
+        gear.add_output(output_name=output_name,output_uom=output_uom,output_matrix_row=output_matrix_row, feedthrough_matrix_row=feedthrough_matrix_row)
         logger.debug("Proportional derivative feedback for gear '%s' on dof '%s' added.", gear_name, dof)
         
 
