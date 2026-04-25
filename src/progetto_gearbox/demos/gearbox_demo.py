@@ -6,6 +6,7 @@ from progetto_gearbox.gear import SpurGear
 from progetto_gearbox.gearbox import GearBox
 from progetto_gearbox.simulation import Simulation
 from progetto_gearbox.utils.input_functions import sinusoidal, step, ramp, constant
+from numpy import pi
 
 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 log_file = Path("logs") / f"{Path(__file__).stem}_{timestamp}.log"
@@ -43,6 +44,8 @@ def create_gearbox():
 
 def main(doc=None, server=None):
     gearbox = create_gearbox()
+    gearbox.get_state_space()
+
     driving_gear_initial_conditions = {
         "x_pos": 0,
         "x_vel": 0,
@@ -51,46 +54,26 @@ def main(doc=None, server=None):
         "t_pos": 0,
         "t_vel": 0
     }
-    # driven_pinion_initial_conditions = gearbox.get_driven_gear_initial_conditions_from(
-    #     driven_gear_name="driven_pinion", 
-    #     driving_gear_name="driving_gear", 
-    #     driving_gear_init_conditions_dict=driving_gear_initial_conditions, 
-    #     gamma=0.0)
-    
-    driven_pinion_initial_conditions = {
-        "x_pos": 80 * 1e-3,
-        "x_vel": 0,
-        "y_pos": 0,
-        "y_vel": 0,
-        "t_pos": 0,
-        "t_vel": 0
-    }
-
     initial_conditions = {
         "driving_gear": driving_gear_initial_conditions,
-        "driven_pinion": driven_pinion_initial_conditions,
     }
-
+    gearbox.add_meshing_constraint(driving_gear_name="driving_gear", driven_gear_name="driven_pinion", gamma= pi/10)
     gearbox.set_initial_conditions(init_conditions_dict=initial_conditions)
-
     
-    # input_functions = {"driving_gear": {"t_torque": PD(kp=100, pos_set = 10, pos_idx = gearbox.get_state_idx("driving_gear_t_vel"))}}
     gearbox.add_proportional_derivative_feedback(gear_name="driving_gear", dof = "t", kp = 0, kd = 100)
     input_functions = {
         "driving_gear": {
-            # "t_torque": constant(value = 0.1)
-            "t_vel_ref": step(step_value = 1, t_start = 0.1)
+            "t_vel_ref": step(step_value = 1, t_start = 0.2)
             },
         "driven_pinion": {
-            "t_torque": constant(value=1)
+            "t_torque": constant(value=0)
         }
     }
     gearbox.set_input_functions(input_func_dict=input_functions)
-    gearbox.get_state_space()
-    
+
     gearbox.add_spring_damper(to_gear_name="driving_gear", stiffness={"x": 10000, "y":10000}, damping={"x": 10, "y": 10})
-    gearbox.add_spring_damper(to_gear_name="driven_pinion", stiffness={"x": 10000, "y":10000}, damping={"x": 10, "y": 10}, origin={"x": 80*1e-3})
-    gearbox.add_meshing_constraint(driving_gear_name="driving_gear", driven_gear_name="driven_pinion")
+    gearbox.add_spring_damper(to_gear_name="driven_pinion", stiffness={"x": 10000, "y":10000}, damping={"x": 10, "y": 10})
+    
     
     gearbox_simulation = Simulation(
         t_tot=1.0,
@@ -101,7 +84,8 @@ def main(doc=None, server=None):
     gearbox_simulation.solve()
     gearbox_simulation.plot_initial_conditions()
     gearbox_simulation.plot()
-    gearbox_simulation.animate(doc=doc, server=server)
+    if doc is not None:
+        gearbox_simulation.animate(doc=doc, server=server)
 
 
 if __name__ == "__main__":

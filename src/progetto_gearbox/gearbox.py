@@ -21,7 +21,10 @@ class GearBox(Model):
         super().__init__(name)
         self.gears: list[SpurGear] = []
         self.gear_names: list[str] = []
-        self.meshed_gears: list[tuple[str, str]] = []  # List of tuples (driving_gear_name, driven_gear_name)
+        self.meshed_gear_names: list[tuple[str, str]] = []  # List of tuples (driving_gear_name, driven_gear_name)
+        self.meshed_gears: list[tuple['SpurGear','SpurGear']] = []
+        self.meshed_dofs_idx: list[tuple[int,int,int,int]] = []
+        self.meshed_gamma: list[float] = []
         self._gears_added = False
         self._initial_conditions_set = False
         self._input_functions_set = False
@@ -43,8 +46,6 @@ class GearBox(Model):
             
     def get_state_space(self) -> None:
         logger.info("Setting up the state space model...")
-        assert self._initial_conditions_set, "Before getting state space, you should set initial conditions."
-        assert self._input_functions_set, "Before getting state space, you should set input functions."
         self.state_names = []
         self.state_uoms = []
         self.input_names = []
@@ -79,106 +80,141 @@ class GearBox(Model):
 
     def set_initial_conditions(self, init_conditions_dict = dict[str, dict[str, float]]) -> None:
         logger.info("Setting initial conditions for gearbox '%s'...", self.name)
-        logger.debug("Checking initial conditions for gearbox '%s'...", self.name)
+        assert self._state_space_set, "You should set state space before setting initial conditions."
         for gear_name in init_conditions_dict.keys():
+            logger.debug("Setting initial conditions for gear '%s'...", gear_name)
             assert gear_name in self.gear_names, f"Initial condition for gear '{gear_name}' was provided, but gear '{gear_name}' was not found in gearbox '{self.name}'."
-        logger.debug("Initial conditions for gearbox '%s' checked.", self.name)
-
-        for gear_name in self.gear_names:
-            logger.debug("Setting initial condition for gear '%s'...",gear_name)
-            _, gear = self._get_gear(gear_name)
-            if gear_name in init_conditions_dict.keys():
-                gear.set_initial_conditions(init_conditions_dict=init_conditions_dict[gear_name])
-                logger.debug("Initial conditions for gear '%s' set.", gear_name)
-            else:
-                logger.warning("Initial conditions for gear '%s' were not assigned in gearbox '%s'. Initialising them to 'None'.", gear_name, self.name)
-                gear.set_initial_conditions(init_conditions_dict={})
+            gear_init_conditions_dict = init_conditions_dict[gear_name]
+            for init_state in gear_init_conditions_dict.keys():
+                logger.debug("Setting initial condition for dof '%s'...", init_state)
+                init_state_idx, _ = self._get_state_idx_and_name(gear_name=gear_name, gear_state_name=init_state)
+                self.initial_conditions[init_state_idx] = gear_init_conditions_dict[init_state]
+                logger.debug("Initial condition for dof '%s' set.", init_state)
+            logger.debug("Initial conditions for gear '%s' set.", gear_name)
+        
+        logger.debug("Deriving initial conditions for meshed gears in gearbox '%s'...", self.name)
+        for (driving_gear_name, driven_gear_name), gamma in zip(self.meshed_gear_names, self.meshed_gamma):
+            logger.debug("Setting gear '%s' initial conditions...", driving_gear_name)
+            self._get_driven_gear_initial_conditions_from(driven_gear_name=driven_gear_name,driving_gear_name=driving_gear_name, gamma=gamma)
+            logger.debug("Initial conditions for gear '%s' set.", driving_gear_name)
+        logger.debug("Initial conditions for meshed gears in gearbox '%s' derived.", self.name)
         self._initial_conditions_set = True
         logger.info("Initial conditions for gearbox '%s' set.", self.name)
 
+    
+    
+    
+    
     def add_proportional_derivative_feedback(self, gear_name: str, dof: str, kp: float, kd: float):
-        logger.debug("Adding proportional derivative feedback for gear '%s' on dof '%s'...", gear_name, dof)
+        logger.debug("Adding proportional derivative feedback in gearbox '%s' for gear '%s' on dof '%s'...", self.name, gear_name, dof)
         assert not self._input_functions_set, "You should add feedback before setting input functions."
         _, gear = self._get_gear(gear_name=gear_name)
         input_suffix = "_torque" if dof is "t" else "_force"
-        input_name = dof + input_suffix
-        gear.remove_input(input_name=input_name)
+        input_name = gear_name + "_" + dof + input_suffix
+        self.remove_input(input_name=input_name)
 
         output_name = input_name + "_feedback"
         output_uom = "Nm" if dof is "t" else "_torque"
-        output_matrix_row = np.zeros((1,gear.ns))
-        feedthrough_matrix_row = np.zeros((1,gear.ni))
-        vel_state_name = dof + "_vel"
-        vel_state_idx = gear.get_state_idx(state_name=vel_state_name)
+        output_matrix_row = np.zeros((1,self.ns))
+        feedthrough_matrix_row = np.zeros((1,self.ni))
+        gear_vel_state_name = dof + "_vel"
+        vel_state_idx, vel_state_name = self._get_state_idx_and_name(gear_name=gear_name,gear_state_name=gear_vel_state_name)
 
         if kp:
             logger.debug("Adding proportional feedback...")
-            pos_state_name = dof + "_pos"
-            pos_state_idx = gear.get_state_idx(state_name=pos_state_name)
-            pos_input_uom = gear.state_uoms[pos_state_idx]
+            gear_pos_state_name = dof + "_pos"
+            pos_state_idx, pos_state_name = self._get_state_idx_and_name(gear_name=gear_name,state_name=gear_pos_state_name)
+            pos_input_uom = self.state_uoms[pos_state_idx]
             pos_input_name = pos_state_name + "_ref"
-            pos_input_matrix_column = np.zeros((gear.ns,1))
+            pos_input_matrix_column = np.zeros((self.ns,1))
             pos_input_matrix_column[vel_state_idx,0] = kp/gear.inertia[dof]
-            gear.add_input(
+            self.add_input(
                 input_name=pos_input_name,
                 input_uom=pos_input_uom,
                 input_function=None,
                 input_matrix_column=pos_input_matrix_column,
-                feedthrough_matrix_column=np.zeros((gear.no,1))
+                feedthrough_matrix_column=np.zeros((self.no,1))
                 )
-            gear.state_transition_matrix[vel_state_idx,pos_state_idx] -= kp/gear.inertia[dof]
+            self.state_transition_matrix[vel_state_idx,pos_state_idx] -= kp/gear.inertia[dof]
             output_matrix_row[0,pos_state_idx] = - kp
             feedthrough_matrix_row = np.concatenate([feedthrough_matrix_row, np.array([[kp]])],axis=1)
             logger.debug("Proportional feedback added...")
         
         if kd:
             logger.debug("Adding derivative feedback...")
-            vel_input_uom = gear.state_uoms[vel_state_idx]
+            vel_input_uom = self.state_uoms[vel_state_idx]
             vel_input_name = vel_state_name + "_ref"
-            vel_input_matrix_column = np.zeros((gear.ns,1))
+            vel_input_matrix_column = np.zeros((self.ns,1))
             vel_input_matrix_column[vel_state_idx,0] = kd/gear.inertia[dof]
-            gear.add_input(
+            self.add_input(
                 input_name=vel_input_name,
                 input_uom=vel_input_uom,
                 input_function=None,
                 input_matrix_column=vel_input_matrix_column,
-                feedthrough_matrix_column=np.zeros((gear.no,1))
+                feedthrough_matrix_column=np.zeros((self.no,1))
                 )
-            gear.state_transition_matrix[vel_state_idx,vel_state_idx] -= kd/gear.inertia[dof]
+            self.state_transition_matrix[vel_state_idx,vel_state_idx] -= kd/gear.inertia[dof]
             output_matrix_row[0,vel_state_idx] = - kd
             feedthrough_matrix_row = np.concatenate([feedthrough_matrix_row, np.array([[kd]])],axis=1)
             logger.debug("Derivative feedback added...")
         
-        gear.add_output(output_name=output_name,output_uom=output_uom,output_matrix_row=output_matrix_row, feedthrough_matrix_row=feedthrough_matrix_row)
-        logger.debug("Proportional derivative feedback for gear '%s' on dof '%s' added.", gear_name, dof)
+        self.add_output(output_name=output_name,output_uom=output_uom,output_matrix_row=output_matrix_row, feedthrough_matrix_row=feedthrough_matrix_row)
+        logger.debug("Proportional derivative feedback in gearbox '%s' for gear '%s' on dof '%s' added.", self.name, gear_name, dof)
         
-
-
-        
-        
-
-
-
-    
     def set_input_functions(self, input_func_dict = dict[str, dict[str, Callable]]) -> None:
         logger.info("Setting input functions for gearbox '%s'...", self.name)
+        assert self._state_space_set, "You should get the state space model before setting inputs."
         logger.debug("Checking input functions for gearbox '%s'...", self.name)
         for gear_name in input_func_dict.keys():
             assert gear_name in self.gear_names, f"Input functions for gear '{gear_name}' were provided, but gear '{gear_name}' was not found in gearbox '{self.name}'."
         logger.debug("Input functions for gearbox '%s' checked.", self.name)
-
+        
+        inputs_to_be_removed = []
         for gear_name in self.gear_names:
             logger.debug("Setting input functions for gear '%s'...",gear_name)
             _, gear = self._get_gear(gear_name)
+            gear_input_names = [input_name for input_name in self.input_names if input_name.startswith(gear_name)]
             if gear_name in input_func_dict.keys():
-                gear.set_input_functions(input_func_dict=input_func_dict[gear_name])
-                logger.debug("Input functions for gear '%s' set.", gear_name)
+                gear_input_func_dict = input_func_dict[gear_name]
+                for gear_input_name in gear_input_names:
+                    logger.debug("Setting input '%s'...", gear_input_name)
+                    gear_input_idx = self.get_input_idx(input_name=gear_input_name)
+                    local_gear_input_name = gear_input_name.replace(gear_name + "_","")
+                    if local_gear_input_name in gear_input_func_dict.keys():
+                        self.input_funcs[gear_input_idx] = gear_input_func_dict[local_gear_input_name]
+                        logger.debug("Input '%s' set.", gear_input_name)
+                    else:
+                        inputs_to_be_removed.append(gear_input_name)
+                        logger.warning("Input function for input '%s' was not assigned. Input will be removed from gearbox '%s'.", gear_input_name, self.name)
+                    logger.debug("Input '%s' set.", gear_input_name)
             else:
-                logger.warning("Input functions for gear '%s' were not assigned in gearbox '%s'. Removing them.", gear_name, self.name)
-                gear.set_input_functions(input_func_dict={})
+                for gear_input_name in gear_input_names:
+                    logger.debug("Setting input '%s'...", gear_input_name)
+                    inputs_to_be_removed.append(gear_input_name)
+                    logger.warning("Input function for input '%s' was not assigned. Input will be removed from gearbox '%s'.", gear_input_name, self.name)
+                    logger.debug("Input '%s' set.", gear_input_name)
+            
+            for gear_input_name in gear_input_names:
+                logger.debug("Setting input '%s'...", gear_input_name)
+                gear_input_idx = self.get_input_idx(input_name=gear_input_name)
+            logger.debug("Input functions for gear '%s' set.",gear_name)
+        
+        self.remove_unset_inputs(inputs_to_be_removed=inputs_to_be_removed)
+
+        # for driving_gear_name, driven_gear_name in self.meshed_gear_names:
+        #     logger.debug("Setting meshing offset between gears '%s' and '%s'...", driving_gear_name, driven_gear_name)
+        #     input_name = f"Offset_meshing_{driven_gear_name}_{driving_gear_name}"
+        #     input_idx = self.get_input_idx(input_name=input_name)
+        #     driving_dof_pos_idx, _ = self._get_state_idx_and_name(gear_name=driving_gear_name, gear_state_name="t_pos")
+        #     driven_dof_pos_idx, _ = self._get_state_idx_and_name(gear_name=driven_gear_name, gear_state_name="t_pos")
+        #     input_value = - self.initial_conditions[driving_dof_pos_idx] - self.initial_conditions[driven_dof_pos_idx]
+        #     self.input_funcs[input_idx] = constant(value=input_value)
+        #     logger.debug("Meshing offset between gears '%s' and '%s' set.", driving_gear_name, driven_gear_name)
+
         self._input_functions_set = True
         logger.info("Input functions for gearbox '%s' set.", self.name)
-
+    
+    
     def add_lumped_mass(self, name: str = "lumped_mass", mass: float = 0.0):
         raise NotImplementedError
 
@@ -194,7 +230,7 @@ class GearBox(Model):
         # connecting_from -- C,K -- connecting_to
         # ground -- C,K -- connecting_to
         logger.debug("Adding spring damper connection from '%s' to '%s'...", from_gear_name if from_gear_name is not None else "ground", to_gear_name)
-        assert self._state_space_set, "You should set state space before adding spring and dampers."
+        assert self._initial_conditions_set, "You should set initial conditions before adding spring and dampers."
         logger.debug("Checking spring damper connection dofs...")
         setting_dofs = set(stiffness.keys()).union(set(damping.keys())).union(set(origin.keys()))
         for dof_name in setting_dofs:
@@ -219,11 +255,12 @@ class GearBox(Model):
                 from_dof_pos_idx, _ = self._get_state_idx_and_name(gear_name=from_gear_name, gear_state_name=dof_pos_name)
                 from_dof_vel_idx, _ = self._get_state_idx_and_name(gear_name=from_gear_name, gear_state_name=dof_vel_name)
             else:
-                if dof_name in origin.keys() and dof_name in stiffness.keys():
+                if (dof_name in origin.keys() or self.initial_conditions[to_dof_pos_idx]) and dof_name in stiffness.keys():
                     logger.debug("Adding ground spring damper input for dof '%s' in gearbox '%s'...", dof_name, self.name)
                     new_input_name = f"Offset_force_spring_damper_{to_gear_name}_{dof_name}"
                     new_input_uom = "m" if dof_name in ["x", "y"] else "rad"
-                    new_input_func = constant(value=origin[dof_name])
+                    new_input_value = origin[dof_name] if dof_name in origin.keys() else self.initial_conditions[to_dof_pos_idx]
+                    new_input_func = constant(value=new_input_value)
                     new_input_matrix_col = np.zeros((self.ns, 1))
                     new_input_matrix_col[to_dof_vel_idx, 0] = sign*stiffness[dof_name]/to_gear.inertia[dof_name]
                     new_feedthrough_matrix_col = np.zeros((self.no, 1))
@@ -273,31 +310,45 @@ class GearBox(Model):
         logger.debug("Spring damper connections added.")
         logger.debug("Spring damper connection from '%s' to '%s' added.", from_gear_name if from_gear_name is not None else "ground", to_gear_name)
 
-    def add_meshing_constraint(self, driving_gear_name: str, driven_gear_name: str):
+    def add_meshing_constraint(self, driving_gear_name: str, driven_gear_name: str, gamma: float=0.0):
         logger.info("Adding meshing constraint between driving gear '%s' and driven gear '%s'...", driving_gear_name, driven_gear_name)
-        assert self._state_space_set, "You should set state space before adding spring and dampers."
-        self.meshed_gears.append((driving_gear_name, driven_gear_name))
+        assert self._state_space_set, "You should set state space before adding meshing constraints."
+        self.meshed_gear_names.append((driving_gear_name, driven_gear_name))
+        _, driving_gear = self._get_gear(driving_gear_name)
+        _, driven_gear = self._get_gear(driven_gear_name)
+        self.meshed_gears.append((driving_gear,driven_gear))
+        driving_dof_pos_idx, _ = self._get_state_idx_and_name(gear_name=driving_gear_name, gear_state_name="t_pos")
+        driving_dof_vel_idx, _ = self._get_state_idx_and_name(gear_name=driving_gear_name, gear_state_name="t_vel")
+        driven_dof_pos_idx, _ = self._get_state_idx_and_name(gear_name=driven_gear_name, gear_state_name="t_pos")
+        driven_dof_vel_idx, _ = self._get_state_idx_and_name(gear_name=driven_gear_name, gear_state_name="t_vel")
+        self.meshed_dofs_idx.append((driving_dof_pos_idx,driving_dof_vel_idx,driven_dof_pos_idx,driven_dof_vel_idx))
+        self.meshed_gamma.append(gamma)
+
+        logger.debug("Adding meshing input...")
+        # new_input_name = f"Offset_meshing_{driven_gear_name}_{driving_gear_name}"
+        # new_input_uom = "rad"
+        # # new_input_value = - self.initial_conditions[driving_dof_pos_idx] - self.initial_conditions[driving_dof_pos_idx]
+        # # new_input_func = constant(value=new_input_value)
+        # new_input_func = None
+        # new_input_matrix_col = np.zeros((self.ns, 1))
+        # new_feedthrough_matrix_col = np.zeros((self.no, 1))
+        # self.add_input(input_name=new_input_name, input_uom=new_input_uom, input_function=new_input_func, input_matrix_column=new_input_matrix_col, feedthrough_matrix_column=new_feedthrough_matrix_col)
+        logger.debug("Meshing input added.")
+
         if self.non_linear_process is None:
             self.non_linear_process = self._compute_meshing_constraints
         logger.info("Meshing constraint between driving gear '%s' and driven gear '%s' added.", driving_gear_name, driven_gear_name)
 
     def _compute_meshing_constraints(self, time, state_vector, input_vector):
         delta_state_matrix = np.zeros((self.ns,self.ns))
-        for meshed_driving_gear_name, meshed_driven_gear_name in self.meshed_gears:
-            meshed_driving_gear_idx, meshed_driving_gear = self._get_gear(meshed_driving_gear_name)
-            meshed_driven_gear_idx, meshed_driven_gear = self._get_gear(meshed_driven_gear_name)
-            # driving_stiffness = meshed_driving_gear._example_mesh_stiffness(time, state_vector)
-            # driving_damping = meshed_driving_gear._example_mesh_damping(time, state_vector)
-            # driven_stiffness = meshed_driven_gear._example_mesh_stiffness(time, state_vector)
-            # driven_damping = meshed_driven_gear._example_mesh_damping(time, state_vector)
-            # mesh_stiffness = 1/(1/driving_stiffness + 1/driven_stiffness)
-            # mesh_damping = 1/(1/driving_damping + 1/driven_damping)
+        delta_state_vector = np.zeros((self.ns,1))
+        for meshed_gears, meshed_dofs_idx in zip(self.meshed_gears,self.meshed_dofs_idx):
+            meshed_driving_gear, meshed_driven_gear = meshed_gears
+            driving_dof_pos_idx, driving_dof_vel_idx, driven_dof_pos_idx, driven_dof_vel_idx = meshed_dofs_idx
+ 
             mesh_stiffness = self._example_mesh_stiffness(time,state_vector)
             mesh_damping = self._example_mesh_damping(time,state_vector)
-            driving_dof_pos_idx, _ = self._get_state_idx_and_name(gear_name=meshed_driving_gear_name, gear_state_name="t_pos")
-            driving_dof_vel_idx, _ = self._get_state_idx_and_name(gear_name=meshed_driving_gear_name, gear_state_name="t_vel")
-            driven_dof_pos_idx, _ = self._get_state_idx_and_name(gear_name=meshed_driven_gear_name, gear_state_name="t_pos")
-            driven_dof_vel_idx, _ = self._get_state_idx_and_name(gear_name=meshed_driven_gear_name, gear_state_name="t_vel")
+            
             delta_state_matrix[driving_dof_vel_idx, driving_dof_pos_idx] -= mesh_stiffness*meshed_driving_gear.radiuses["base"]**2/meshed_driving_gear.inertia["t"]
             delta_state_matrix[driving_dof_vel_idx, driving_dof_vel_idx] -= mesh_damping*meshed_driving_gear.radiuses["base"]**2/meshed_driving_gear.inertia["t"]
             delta_state_matrix[driving_dof_vel_idx, driven_dof_pos_idx] -= mesh_stiffness*meshed_driving_gear.radiuses["base"]*meshed_driven_gear.radiuses["base"]/meshed_driving_gear.inertia["t"]
@@ -306,15 +357,18 @@ class GearBox(Model):
             delta_state_matrix[driven_dof_vel_idx, driving_dof_vel_idx] -= mesh_damping*meshed_driven_gear.radiuses["base"]*meshed_driving_gear.radiuses["base"]/meshed_driven_gear.inertia["t"]
             delta_state_matrix[driven_dof_vel_idx, driven_dof_pos_idx] -= mesh_stiffness*meshed_driven_gear.radiuses["base"]**2/meshed_driven_gear.inertia["t"]
             delta_state_matrix[driven_dof_vel_idx, driven_dof_vel_idx] -= mesh_damping*meshed_driven_gear.radiuses["base"]**2/meshed_driven_gear.inertia["t"]
-        return delta_state_matrix @ state_vector
+            delta_state_vector[driving_dof_pos_idx] -= self.initial_conditions[driving_dof_pos_idx]
+            delta_state_vector[driven_dof_pos_idx] -= self.initial_conditions[driven_dof_pos_idx]
+        
+        return delta_state_matrix @ (state_vector + delta_state_vector)
 
-    def get_driven_gear_initial_conditions_from(self,
+    def _get_driven_gear_initial_conditions_from(self,
             driven_gear_name: str, 
-            driving_gear_name: str, 
-            driving_gear_init_conditions_dict: dict[str, float], 
+            driving_gear_name: str,
             gamma: float, 
             driving_gear_tooth_idx: int = 0, 
-            driven_gear_tooth_idx: int = 0) -> dict[str, float]: 
+            driven_gear_tooth_idx: int = 0) -> dict[str, float]:
+        
         
         logger.debug("Computing initial conditions for driven gear '%s' from driving gear '%s'.", driven_gear_name, driving_gear_name)
         
@@ -323,70 +377,49 @@ class GearBox(Model):
         _, driven_gear = self._get_gear(driven_gear_name)
         logger.debug("Driving and driven gears obtained.")
 
-        logger.debug("Extracting driving gear initial conditions...")
-        driving_gear_x_pos = driving_gear_init_conditions_dict["x_pos"] if "x_pos" in driving_gear_init_conditions_dict.keys() else 0.0
-        driving_gear_x_vel = driving_gear_init_conditions_dict["x_vel"] if "x_vel" in driving_gear_init_conditions_dict.keys() else 0.0
-        driving_gear_y_pos = driving_gear_init_conditions_dict["y_pos"] if "y_pos" in driving_gear_init_conditions_dict.keys() else 0.0
-        driving_gear_y_vel = driving_gear_init_conditions_dict["y_vel"] if "y_vel" in driving_gear_init_conditions_dict.keys() else 0.0
-        driving_gear_t_pos = driving_gear_init_conditions_dict["t_pos"] if "t_pos" in driving_gear_init_conditions_dict.keys() else 0.0
-        driving_gear_t_vel = driving_gear_init_conditions_dict["t_vel"] if "t_vel" in driving_gear_init_conditions_dict.keys() else 0.0
-        logger.debug("Driving gear initial conditions extracted.")
-
-        logger.debug("Computing driven gear initial conditions...")
-        logger.warning("Assuming that gamma_vel is 0...")
-        driven_gear_x_pos, driven_gear_x_vel, driven_gear_y_pos, driven_gear_y_vel = self.get_driven_gear_position_and_velocity_from(
-            driven_gear=driven_gear, 
-            driving_gear=driving_gear, 
-            driving_gear_x_pos=driving_gear_x_pos, 
-            driving_gear_x_vel=driving_gear_x_vel, 
-            driving_gear_y_pos=driving_gear_y_pos, 
-            driving_gear_y_vel=driving_gear_y_vel, 
-            gamma=gamma
-        )
-        driven_gear_t_pos, driven_gear_t_vel = self.get_driven_gear_angular_position_and_velocity_from(
-            driven_gear=driven_gear,
-            driving_gear=driving_gear,
-            driving_gear_t_pos=driving_gear_t_pos,
-            driving_gear_t_vel=driving_gear_t_vel,
-            gamma=gamma,
-            driving_gear_tooth_idx=driving_gear_tooth_idx,
-            driven_gear_tooth_idx=driven_gear_tooth_idx
-        )
-        logger.debug("Driven gear initial conditions computed.")
-
-        return {"x_pos": driven_gear_x_pos, "x_vel": driven_gear_x_vel, "y_pos": driven_gear_y_pos, "y_vel": driven_gear_y_vel, "t_pos": driven_gear_t_pos, "t_vel": driven_gear_t_vel}
-
-    def get_driven_gear_position_and_velocity_from(self,
-            driven_gear: "SpurGear", 
-            driving_gear: "SpurGear", 
-            driving_gear_x_pos: float,
-            driving_gear_x_vel: float,
-            driving_gear_y_pos: float,
-            driving_gear_y_vel: float,
-            gamma: float) -> tuple[float, float, float, float]:
-        
+        logger.debug("Setting initial condition for dof 'x_pos'...")
+        driving_x_pos_idx, _ = self._get_state_idx_and_name(gear_name=driving_gear_name,gear_state_name="x_pos")
+        driven_x_pos_idx, _ = self._get_state_idx_and_name(gear_name=driven_gear_name,gear_state_name="x_pos")
         centres_distance = driving_gear.radiuses["pitch"] + driven_gear.radiuses["pitch"]
-        driven_gear_x_pos = driving_gear_x_pos + centres_distance*np.cos(gamma)
-        driven_gear_x_vel = driving_gear_x_vel
-        driven_gear_y_pos = driving_gear_y_pos + centres_distance*np.sin(gamma)
-        driven_gear_y_vel = driving_gear_y_vel
-        logger.warning("Assuming that gamma_vel is 0...")
-        return driven_gear_x_pos, driven_gear_x_vel, driven_gear_y_pos, driven_gear_y_vel
+        self.initial_conditions[driven_x_pos_idx] = self.initial_conditions[driving_x_pos_idx] + centres_distance*np.cos(gamma)
+        logger.debug("Initial condition for dof 'x_pos' set.")
 
-    def get_driven_gear_angular_position_and_velocity_from(self,
-            driven_gear: "SpurGear", 
-            driving_gear: "SpurGear", 
-            driving_gear_t_pos: float,
-            driving_gear_t_vel: float,
-            gamma: float,
-            driving_gear_tooth_idx: int = 0,
-            driven_gear_tooth_idx: int = 0
-            ) -> tuple[float, float]:
+        logger.debug("Setting initial condition for dof 'x_vel'...")
+        driving_x_vel_idx, _ = self._get_state_idx_and_name(gear_name=driving_gear_name,gear_state_name="x_vel")
+        driven_x_vel_idx, _ = self._get_state_idx_and_name(gear_name=driven_gear_name,gear_state_name="x_vel")
+        self.initial_conditions[driven_x_vel_idx] = self.initial_conditions[driving_x_vel_idx]
+        logger.debug("Initial condition for dof 'x_vel' set.")
+
+
+        logger.debug("Setting initial condition for dof 'y_pos'...")
+        driving_y_pos_idx, _ = self._get_state_idx_and_name(gear_name=driving_gear_name,gear_state_name="y_pos")
+        driven_y_pos_idx, _ = self._get_state_idx_and_name(gear_name=driven_gear_name,gear_state_name="y_pos")
+        self.initial_conditions[driven_y_pos_idx] = self.initial_conditions[driving_y_pos_idx] + centres_distance*np.sin(gamma)
+        logger.debug("Initial condition for dof 'y_pos' set.")
+
+
+        logger.debug("Setting initial condition for dof 'y_vel'...")
+        driving_y_vel_idx, _ = self._get_state_idx_and_name(gear_name=driving_gear_name,gear_state_name="y_vel")
+        driven_y_vel_idx, _ = self._get_state_idx_and_name(gear_name=driven_gear_name,gear_state_name="y_vel")
+        self.initial_conditions[driven_y_vel_idx] = self.initial_conditions[driving_y_vel_idx]
+        logger.debug("Initial condition for dof 'y_vel' set.")
+
+
+        logger.debug("Setting initial condition for dof 't_pos'...")
+        driving_t_pos_idx, _ = self._get_state_idx_and_name(gear_name=driving_gear_name,gear_state_name="t_pos")
+        driven_t_pos_idx, _ = self._get_state_idx_and_name(gear_name=driven_gear_name,gear_state_name="t_pos")
+        self.initial_conditions[driven_t_pos_idx] = pi - driving_gear.teeth_number / driven_gear.teeth_number * self.initial_conditions[driving_t_pos_idx] + (driving_gear.teeth_number / driven_gear.teeth_number + 1) * gamma - pi / 2 / driven_gear.teeth_number * (4 * driving_gear_tooth_idx + 4 * driven_gear_tooth_idx - 6)
+        logger.debug("Initial condition for dof 't_pos' set.")
+
+
+        logger.debug("Setting initial condition for dof 't_vel'...")
+        driving_t_vel_idx, _ = self._get_state_idx_and_name(gear_name=driving_gear_name,gear_state_name="t_vel")
+        driven_t_vel_idx, _ = self._get_state_idx_and_name(gear_name=driven_gear_name,gear_state_name="t_vel")
+        self.initial_conditions[driven_t_vel_idx] = - self.initial_conditions[driving_t_vel_idx] * driving_gear.teeth_number / driven_gear.teeth_number
+        logger.debug("Initial condition for dof 't_vel' set.")
+
+        logger.debug("Initial conditions for driven gear '%s' from driving gear '%s' computed.", driven_gear_name, driving_gear_name)
         
-        driven_gear_t_pos = pi - driving_gear.teeth_number / driven_gear.teeth_number * driving_gear_t_pos + (driving_gear.teeth_number / driven_gear.teeth_number + 1) * gamma - pi / 2 / driven_gear.teeth_number * (4 * driving_gear_tooth_idx + 4 * driven_gear_tooth_idx - 6)
-        driven_gear_t_vel = -driving_gear_t_vel * driving_gear.teeth_number / driven_gear.teeth_number
-        return driven_gear_t_pos, driven_gear_t_vel
-
     
     def compute_teeth_engagement(self, teeth_position, mode, gamma, gear_rotation, other_gear): ### fix
         pass

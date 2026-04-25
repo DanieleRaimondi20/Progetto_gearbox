@@ -53,6 +53,7 @@ class Model(ABC):
         self.non_linear_process = None
         self.non_linear_output = None
         self.initial_conditions = None
+        self._initial_conditions_set = False
         logger.info("Model '%s' initialized.", name)
 
     @abstractmethod
@@ -104,7 +105,7 @@ class Model(ABC):
             else:
                 logger.warning("Initial condition for dof '%s' was not assigned in model '%s'. Keeping a 'None'.", state_name, self.name)
                 self.initial_conditions[state_idx] = None
-        
+        self._initial_conditions_set = True
         logger.debug("Initial conditions for model '%s' set.", self.name)
 
     def set_input_functions(self, input_func_dict: dict[str, Callable] = {}):
