@@ -202,7 +202,7 @@ class SpurGear(Model):
         return fig
 
     def _get_engagement_array(self, engaged_teeth: NDArray[np.bool] | None = None):
-        if not engaged_teeth:
+        if engaged_teeth is None:
             engaged_teeth = np.zeros(self.teeth_number,dtype=np.bool)
             engaged_teeth[0] = True
         return engaged_teeth
@@ -343,13 +343,18 @@ class SpurGear(Model):
             y_pos: float = 0,
         ) -> tuple[figure, ColumnDataSource, GlyphRenderer]:
 
-        radii_names = [k for k in self.radiuses.keys() if k != "root"]
-        radii_values = [self.radiuses[k] for k in radii_names]
-
+        radii_values = []
+        colors = []
+        for radius_name, radius_value in self.radiuses.items():
+            if radius_name != "root":
+                radii_values.append(radius_value)
+                colors.append("black" if radius_name != "base" else "red")
+    
         source = ColumnDataSource(data=dict(
             x=[x_pos] * len(radii_values),
             y=[y_pos] * len(radii_values),
             radius=radii_values,
+            line_colors=colors
         ))
 
         renderer = fig.circle(
@@ -357,7 +362,7 @@ class SpurGear(Model):
             y="y",
             radius="radius",
             source=source,
-            line_color="black",
+            line_color="line_colors",
             fill_color=None,
             line_width=0.5,
             line_dash="dashed",
@@ -408,6 +413,7 @@ class SpurGear(Model):
             x=[x_pos] * n,
             y=[y_pos] * n,
             radius=source.data["radius"],
+            line_colors=source.data["line_colors"]
         )
 
     def _update_plot(

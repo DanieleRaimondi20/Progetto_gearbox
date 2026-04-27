@@ -57,7 +57,7 @@ def main(doc=None, server=None):
     initial_conditions = {
         "driving_gear": driving_gear_initial_conditions,
     }
-    gearbox.add_meshing_constraint(driving_gear_name="driving_gear", driven_gear_name="driven_pinion", gamma= pi/10)
+    gearbox.add_meshing_constraint(driving_gear_name="driving_gear", driven_gear_name="driven_pinion", gamma=0)
     gearbox.set_initial_conditions(init_conditions_dict=initial_conditions)
     
     gearbox.add_proportional_derivative_feedback(gear_name="driving_gear", dof = "t", kp = 0, kd = 100)

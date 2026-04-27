@@ -90,6 +90,9 @@ class Model(ABC):
     def _update_plot(sources: ColumnDataSource, state_vector: NDArray):
         raise NotImplementedError
 
+    def _get_additional_outputs(self, time: NDArray, state_vector: NDArray) -> NDArray:
+        return dict()
+
     def set_initial_conditions(self, init_conditions_dict: dict[str, float] = {}):
         logger.debug("Setting initial conditions for model '%s'...", self.name)
         logger.debug("Checking initial conditions for model '%s'...", self.name)

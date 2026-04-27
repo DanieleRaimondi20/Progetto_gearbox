@@ -4,8 +4,10 @@ from progetto_gearbox import gear
 from progetto_gearbox.interfaces.simulation_interfaces import Model
 from progetto_gearbox.gear import SpurGear
 from progetto_gearbox.utils.input_functions import constant
+from progetto_gearbox.utils.angles import wrapToPi
 from copy import deepcopy
 from scipy.linalg import block_diag
+from scipy.integrate import trapezoid
 import numpy as np
 from numpy import pi
 from numpy.typing import NDArray
@@ -22,13 +24,14 @@ class GearBox(Model):
         self.gears: list[SpurGear] = []
         self.gear_names: list[str] = []
         self.meshed_gear_names: list[tuple[str, str]] = []  # List of tuples (driving_gear_name, driven_gear_name)
-        self.meshed_gears: list[tuple['SpurGear','SpurGear']] = []
+        self.meshed_gears: list[tuple[int,'SpurGear',int,'SpurGear']] = []
         self.meshed_dofs_idx: list[tuple[int,int,int,int]] = []
         self.meshed_gamma: list[float] = []
         self._gears_added = False
         self._initial_conditions_set = False
         self._input_functions_set = False
         self._state_space_set = False
+
         
 
 
@@ -101,20 +104,16 @@ class GearBox(Model):
         self._initial_conditions_set = True
         logger.info("Initial conditions for gearbox '%s' set.", self.name)
 
-    
-    
-    
-    
     def add_proportional_derivative_feedback(self, gear_name: str, dof: str, kp: float, kd: float):
         logger.debug("Adding proportional derivative feedback in gearbox '%s' for gear '%s' on dof '%s'...", self.name, gear_name, dof)
         assert not self._input_functions_set, "You should add feedback before setting input functions."
         _, gear = self._get_gear(gear_name=gear_name)
-        input_suffix = "_torque" if dof is "t" else "_force"
+        input_suffix = "_torque" if dof == "t" else "_force"
         input_name = gear_name + "_" + dof + input_suffix
         self.remove_input(input_name=input_name)
 
         output_name = input_name + "_feedback"
-        output_uom = "Nm" if dof is "t" else "_torque"
+        output_uom = "Nm" if dof == "t" else "_torque"
         output_matrix_row = np.zeros((1,self.ns))
         feedthrough_matrix_row = np.zeros((1,self.ni))
         gear_vel_state_name = dof + "_vel"
@@ -200,32 +199,9 @@ class GearBox(Model):
             logger.debug("Input functions for gear '%s' set.",gear_name)
         
         self.remove_unset_inputs(inputs_to_be_removed=inputs_to_be_removed)
-
-        # for driving_gear_name, driven_gear_name in self.meshed_gear_names:
-        #     logger.debug("Setting meshing offset between gears '%s' and '%s'...", driving_gear_name, driven_gear_name)
-        #     input_name = f"Offset_meshing_{driven_gear_name}_{driving_gear_name}"
-        #     input_idx = self.get_input_idx(input_name=input_name)
-        #     driving_dof_pos_idx, _ = self._get_state_idx_and_name(gear_name=driving_gear_name, gear_state_name="t_pos")
-        #     driven_dof_pos_idx, _ = self._get_state_idx_and_name(gear_name=driven_gear_name, gear_state_name="t_pos")
-        #     input_value = - self.initial_conditions[driving_dof_pos_idx] - self.initial_conditions[driven_dof_pos_idx]
-        #     self.input_funcs[input_idx] = constant(value=input_value)
-        #     logger.debug("Meshing offset between gears '%s' and '%s' set.", driving_gear_name, driven_gear_name)
-
         self._input_functions_set = True
         logger.info("Input functions for gearbox '%s' set.", self.name)
     
-    
-    def add_lumped_mass(self, name: str = "lumped_mass", mass: float = 0.0):
-        raise NotImplementedError
-
-    def add_ground_constraint(self, gear_name: str, dofs: list[str]):
-        logger.debug("Adding ground constraint to gear '%s' for dofs '%s'...", gear_name, dofs)
-        assert self._state_space_set == False, "You should apply ground constraints BEFORE getting state space."
-        # es: gear_name = "gear", dofs = ["x", "y"]
-        gear_idx, gear = self._get_gear(gear_name)
-        for dof in dofs:
-            gear.remove_dof(dof_name=dof)
-
     def add_spring_damper(self, to_gear_name: str, from_gear_name: str | None = None, stiffness: dict[str, float] = {}, damping: dict[str, float] = {}, origin: dict[str, float] = {}):
         # connecting_from -- C,K -- connecting_to
         # ground -- C,K -- connecting_to
@@ -314,27 +290,19 @@ class GearBox(Model):
         logger.info("Adding meshing constraint between driving gear '%s' and driven gear '%s'...", driving_gear_name, driven_gear_name)
         assert self._state_space_set, "You should set state space before adding meshing constraints."
         self.meshed_gear_names.append((driving_gear_name, driven_gear_name))
-        _, driving_gear = self._get_gear(driving_gear_name)
-        _, driven_gear = self._get_gear(driven_gear_name)
-        self.meshed_gears.append((driving_gear,driven_gear))
+        driving_gear_idx, driving_gear = self._get_gear(driving_gear_name)
+        driven_gear_idx, driven_gear = self._get_gear(driven_gear_name)
+        self.meshed_gears.append((driving_gear_idx,driving_gear,driven_gear_idx,driven_gear))
+        driving_dof_x_pos_idx, _ = self._get_state_idx_and_name(gear_name=driving_gear_name, gear_state_name="x_pos")
+        driving_dof_y_pos_idx, _ = self._get_state_idx_and_name(gear_name=driving_gear_name, gear_state_name="y_pos")
         driving_dof_pos_idx, _ = self._get_state_idx_and_name(gear_name=driving_gear_name, gear_state_name="t_pos")
         driving_dof_vel_idx, _ = self._get_state_idx_and_name(gear_name=driving_gear_name, gear_state_name="t_vel")
+        driven_dof_x_pos_idx, _ = self._get_state_idx_and_name(gear_name=driven_gear_name, gear_state_name="x_pos")
+        driven_dof_y_pos_idx, _ = self._get_state_idx_and_name(gear_name=driven_gear_name, gear_state_name="y_pos")
         driven_dof_pos_idx, _ = self._get_state_idx_and_name(gear_name=driven_gear_name, gear_state_name="t_pos")
         driven_dof_vel_idx, _ = self._get_state_idx_and_name(gear_name=driven_gear_name, gear_state_name="t_vel")
-        self.meshed_dofs_idx.append((driving_dof_pos_idx,driving_dof_vel_idx,driven_dof_pos_idx,driven_dof_vel_idx))
+        self.meshed_dofs_idx.append((driving_dof_x_pos_idx,driving_dof_y_pos_idx,driving_dof_pos_idx,driving_dof_vel_idx,driven_dof_x_pos_idx,driven_dof_y_pos_idx,driven_dof_pos_idx,driven_dof_vel_idx))
         self.meshed_gamma.append(gamma)
-
-        logger.debug("Adding meshing input...")
-        # new_input_name = f"Offset_meshing_{driven_gear_name}_{driving_gear_name}"
-        # new_input_uom = "rad"
-        # # new_input_value = - self.initial_conditions[driving_dof_pos_idx] - self.initial_conditions[driving_dof_pos_idx]
-        # # new_input_func = constant(value=new_input_value)
-        # new_input_func = None
-        # new_input_matrix_col = np.zeros((self.ns, 1))
-        # new_feedthrough_matrix_col = np.zeros((self.no, 1))
-        # self.add_input(input_name=new_input_name, input_uom=new_input_uom, input_function=new_input_func, input_matrix_column=new_input_matrix_col, feedthrough_matrix_column=new_feedthrough_matrix_col)
-        logger.debug("Meshing input added.")
-
         if self.non_linear_process is None:
             self.non_linear_process = self._compute_meshing_constraints
         logger.info("Meshing constraint between driving gear '%s' and driven gear '%s' added.", driving_gear_name, driven_gear_name)
@@ -342,25 +310,50 @@ class GearBox(Model):
     def _compute_meshing_constraints(self, time, state_vector, input_vector):
         delta_state_matrix = np.zeros((self.ns,self.ns))
         delta_state_vector = np.zeros((self.ns,1))
-        for meshed_gears, meshed_dofs_idx in zip(self.meshed_gears,self.meshed_dofs_idx):
-            meshed_driving_gear, meshed_driven_gear = meshed_gears
-            driving_dof_pos_idx, driving_dof_vel_idx, driven_dof_pos_idx, driven_dof_vel_idx = meshed_dofs_idx
+        for meshed_idx, (meshed_gears, meshed_dofs_idx) in enumerate(zip(self.meshed_gears,self.meshed_dofs_idx)):
+            driving_gear_idx, driving_gear, driven_gear_idx, driven_gear = meshed_gears
+            driving_dof_x_pos_idx, driving_dof_y_pos_idx, driving_dof_pos_idx, driving_dof_vel_idx, driven_dof_x_pos_idx, driven_dof_y_pos_idx, driven_dof_pos_idx, driven_dof_vel_idx = meshed_dofs_idx
  
-            mesh_stiffness = self._example_mesh_stiffness(time,state_vector)
-            mesh_damping = self._example_mesh_damping(time,state_vector)
+            driving_gear_teeth_angles = driving_gear._get_teeth_centre_angle(state_vector[driving_dof_pos_idx])
+            driven_gear_teeth_angles = driven_gear._get_teeth_centre_angle(state_vector[driven_dof_pos_idx])
+            gamma = np.atan2(state_vector[driven_dof_y_pos_idx]-state_vector[driving_dof_y_pos_idx], state_vector[driven_dof_x_pos_idx]-state_vector[driving_dof_x_pos_idx])
+            centre_distance = driving_gear.radiuses["pitch"] + driven_gear.radiuses["pitch"]
             
-            delta_state_matrix[driving_dof_vel_idx, driving_dof_pos_idx] -= mesh_stiffness*meshed_driving_gear.radiuses["base"]**2/meshed_driving_gear.inertia["t"]
-            delta_state_matrix[driving_dof_vel_idx, driving_dof_vel_idx] -= mesh_damping*meshed_driving_gear.radiuses["base"]**2/meshed_driving_gear.inertia["t"]
-            delta_state_matrix[driving_dof_vel_idx, driven_dof_pos_idx] -= mesh_stiffness*meshed_driving_gear.radiuses["base"]*meshed_driven_gear.radiuses["base"]/meshed_driving_gear.inertia["t"]
-            delta_state_matrix[driving_dof_vel_idx, driven_dof_vel_idx] -= mesh_damping*meshed_driving_gear.radiuses["base"]*meshed_driven_gear.radiuses["base"]/meshed_driving_gear.inertia["t"]
-            delta_state_matrix[driven_dof_vel_idx, driving_dof_pos_idx] -= mesh_stiffness*meshed_driven_gear.radiuses["base"]*meshed_driving_gear.radiuses["base"]/meshed_driven_gear.inertia["t"]
-            delta_state_matrix[driven_dof_vel_idx, driving_dof_vel_idx] -= mesh_damping*meshed_driven_gear.radiuses["base"]*meshed_driving_gear.radiuses["base"]/meshed_driven_gear.inertia["t"]
-            delta_state_matrix[driven_dof_vel_idx, driven_dof_pos_idx] -= mesh_stiffness*meshed_driven_gear.radiuses["base"]**2/meshed_driven_gear.inertia["t"]
-            delta_state_matrix[driven_dof_vel_idx, driven_dof_vel_idx] -= mesh_damping*meshed_driven_gear.radiuses["base"]**2/meshed_driven_gear.inertia["t"]
+            _, _, driving_gear_engagement = self._compute_teeth_engagement(driving_gear, driven_gear, driving_gear_teeth_angles, "driving", state_vector[driving_dof_vel_idx], centre_distance, gamma)
+            _, _, driven_gear_engagement = self._compute_teeth_engagement(driven_gear, driving_gear, driven_gear_teeth_angles, "driven", state_vector[driven_dof_vel_idx], centre_distance, gamma)
+                                    
+            driving_gear_teeth_engagement_angle = self._compute_teeth_engagement_angle(gear=driving_gear,gear_teeth_pos=driving_gear_teeth_angles,gear_engagement=driving_gear_engagement,gear_mode="driving",gear_vel=state_vector[driving_dof_vel_idx],gamma=gamma)
+            driven_gear_teeth_engagement_angle = self._compute_teeth_engagement_angle(gear=driven_gear,gear_teeth_pos=driven_gear_teeth_angles,gear_engagement=driven_gear_engagement,gear_mode="driven",gear_vel=state_vector[driven_dof_vel_idx],gamma=gamma)
+
+            driving_mesh_stiffness = self._compute_mesh_stiffness(gear=driving_gear, gear_teeth_engagement_angle=driving_gear_teeth_engagement_angle)
+            driven_mesh_stiffness = self._compute_mesh_stiffness(gear=driven_gear, gear_teeth_engagement_angle=driven_gear_teeth_engagement_angle)
+            mesh_stiffness = driving_mesh_stiffness + driven_mesh_stiffness # IDK
+            mesh_damping = self._example_mesh_damping(time, state_vector)
+            
+            delta_state_matrix[driving_dof_vel_idx, driving_dof_pos_idx] -= mesh_stiffness*driving_gear.radiuses["base"]**2/driving_gear.inertia["t"]
+            delta_state_matrix[driving_dof_vel_idx, driving_dof_vel_idx] -= mesh_damping*driving_gear.radiuses["base"]**2/driving_gear.inertia["t"]
+            delta_state_matrix[driving_dof_vel_idx, driven_dof_pos_idx] -= mesh_stiffness*driving_gear.radiuses["base"]*driven_gear.radiuses["base"]/driving_gear.inertia["t"]
+            delta_state_matrix[driving_dof_vel_idx, driven_dof_vel_idx] -= mesh_damping*driving_gear.radiuses["base"]*driven_gear.radiuses["base"]/driving_gear.inertia["t"]
+            delta_state_matrix[driven_dof_vel_idx, driving_dof_pos_idx] -= mesh_stiffness*driven_gear.radiuses["base"]*driving_gear.radiuses["base"]/driven_gear.inertia["t"]
+            delta_state_matrix[driven_dof_vel_idx, driving_dof_vel_idx] -= mesh_damping*driven_gear.radiuses["base"]*driving_gear.radiuses["base"]/driven_gear.inertia["t"]
+            delta_state_matrix[driven_dof_vel_idx, driven_dof_pos_idx] -= mesh_stiffness*driven_gear.radiuses["base"]**2/driven_gear.inertia["t"]
+            delta_state_matrix[driven_dof_vel_idx, driven_dof_vel_idx] -= mesh_damping*driven_gear.radiuses["base"]**2/driven_gear.inertia["t"]
             delta_state_vector[driving_dof_pos_idx] -= self.initial_conditions[driving_dof_pos_idx]
             delta_state_vector[driven_dof_pos_idx] -= self.initial_conditions[driven_dof_pos_idx]
         
         return delta_state_matrix @ (state_vector + delta_state_vector)
+
+
+    def add_lumped_mass(self, name: str = "lumped_mass", mass: float = 0.0):
+        raise NotImplementedError
+
+    def add_ground_constraint(self, gear_name: str, dofs: list[str]):
+        logger.debug("Adding ground constraint to gear '%s' for dofs '%s'...", gear_name, dofs)
+        assert self._state_space_set == False, "You should apply ground constraints BEFORE getting state space."
+        # es: gear_name = "gear", dofs = ["x", "y"]
+        gear_idx, gear = self._get_gear(gear_name)
+        for dof in dofs:
+            gear.remove_dof(dof_name=dof)
 
     def _get_driven_gear_initial_conditions_from(self,
             driven_gear_name: str, 
@@ -420,262 +413,96 @@ class GearBox(Model):
 
         logger.debug("Initial conditions for driven gear '%s' from driving gear '%s' computed.", driven_gear_name, driving_gear_name)
         
-    
-    def compute_teeth_engagement(self, teeth_position, mode, gamma, gear_rotation, other_gear): ### fix
-        pass
-        # csi_a2 = other_gear.compute_csi_angle(other_gear.diameter["addendum"])
-        # a0 = self.radius["pitch"] + other_gear.radius["pitch"]
-        # ro2 = np.sqrt(
-        #     other_gear.radius["addendum"] ** 2
-        #     + a0**2
-        #     - 2
-        #     * other_gear.radius["addendum"]
-        #     * a0
-        #     * np.cos(csi_a2 - self.pressureAngle)
-        # )
-        # phi_2 = self.compute_phi_angle(2 * ro2)
-        # phi_a = self.compute_phi_angle(self.diameter["addendum"])
-
-        # match (mode, gear_rotation):
-        #     case ("driving", gr) if gr > 0:  #
-        #         thetagi = wrapToPi(teethPosition - gamma)
-        #         theta_start = wrapToPi(
-        #             +(-self.pressureAngle + phi_2 - self.angle_at_base / 2)
-        #         )
-        #         theta_end = wrapToPi(
-        #             +(-self.pressureAngle + phi_a - self.angle_at_base / 2)
-        #         )
-        #     case ("driving", gr) if gr < 0:
-        #         thetagi = wrapToPi(teethPosition - gamma)
-        #         theta_start = wrapToPi(
-        #             -(-self.pressureAngle + phi_2 - self.angle_at_base / 2)
-        #         )
-        #         theta_end = wrapToPi(
-        #             -(-self.pressureAngle + phi_a - self.angle_at_base / 2)
-        #         )
-        #     case ("driven", gr) if gr > 0:
-        #         thetagi = wrapToPi(teethPosition - gamma - pi)
-        #         theta_start = wrapToPi(
-        #             -(self.pressureAngle - phi_a - self.angle_at_base / 2)
-        #         )
-        #         theta_end = wrapToPi(
-        #             -(self.pressureAngle - phi_2 - self.angle_at_base / 2)
-        #         )
-        #     case ("driven", gr) if gr < 0:  #
-        #         thetagi = wrapToPi(teethPosition - gamma - pi)
-        #         theta_start = wrapToPi(
-        #             +(self.pressureAngle - phi_a - self.angle_at_base / 2)
-        #         )
-        #         theta_end = wrapToPi(
-        #             +(self.pressureAngle - phi_2 - self.angle_at_base / 2)
-        #         )
-
-        # # --- 6) Condizione di ingaggio corretta ---
-
-        # engagement = np.logical_and(thetagi >= theta_start, thetagi < theta_end)
-
-        # if not np.any(engagement):
-        #     print("No engagement detected.")
-
-        # # Angolo utile per cinematica
-        # alfa1_i = -self.pressureAngle + thetagi
-
-        # return engagement, alfa1_i
-
-    def computeStiffnessAngles(self, t, x): ### fix
-        """to be updated"""
-        pass
-
-    def meshStiffness(self, engagement, alpha1): ### fix
-        # Parameters
-        E = self.young
-        L = self.thickness
-        v = self.poisson
-
-        num_points = 100
-
-        # Define alfa range
-
-        # phig_r - self.angle_at_base/2
-        # np.linspace(0, 1, num_points)[None, :] * (stop - start)[:, None] + start[:, None]
-
-        if self.root_greater_than_base:
-            # Compute Ib, Is, Ia
-            alpha = np.linspace(-alpha1, self.alpha[5], num_points)
-
-            Ib = (
-                (
-                    3
-                    * (
-                        1
-                        + np.cos(alpha1)
-                        * ((self.alpha[2] - alpha) * np.sin(alpha) - np.cos(alpha))
-                    )
-                    ** 2
-                    * (self.alpha[2] - alpha)
-                    * np.cos(alpha)
-                )
-                / (
-                    2
-                    * E
-                    * L
-                    * (np.sin(alpha) + (self.alpha[2] - alpha) * np.cos(alpha)) ** 3
-                )
-                * engagement
-            )
-            Is = (
-                (
-                    1.2
-                    * (1 + v)
-                    * (self.alpha[2] - alpha)
-                    * np.cos(alpha)
-                    * np.cos(alpha1) ** 2
-                )
-                / (E * L * (np.sin(alpha) + (self.alpha[2] - alpha) * np.cos(alpha)))
-                * engagement
-            )
-            Ia = (
-                ((self.alpha[2] - alpha) * np.cos(alpha) * np.sin(alpha1) ** 2)
-                / (
-                    2
-                    * E
-                    * L
-                    * (np.sin(alpha) + (self.alpha[2] - alpha) * np.cos(alpha))
-                )
-                * engagement
-            )
-
+    def _compute_teeth_engagement(self, gear: 'SpurGear', meshed_gear: 'SpurGear', gear_teeth_pos: NDArray, gear_mode: str, gear_vel: float, centre_distance: float, gamma: float): ### fix
+        meshed_gear_csi_addendum = meshed_gear._compute_csi_angle(meshed_gear.diameters["addendum"])
+        meshed_gear_radial_distance_addendum = np.sqrt(meshed_gear.radiuses["addendum"] ** 2 + centre_distance ** 2 - 2 * meshed_gear.radiuses["addendum"] * centre_distance * np.cos(meshed_gear_csi_addendum - gear.pressure_angle))
+        normalised_gear_first_angle = gear._compute_phi_angle(2 * meshed_gear_radial_distance_addendum)-gear.alpha[2]
+        normalised_gear_second_angle = gear._compute_phi_angle(gear.diameters["addendum"])-gear.alpha[2]
+        visual_normalised_gear_first_angle = gear._compute_csi_angle(2 * meshed_gear_radial_distance_addendum)
+        visual_normalised_gear_second_angle = gear._compute_csi_angle(gear.diameters["addendum"])
+        
+        match (gear_mode, gear_vel):
+            case ("driving", gv) if gv >= 0:
+                gear_entry_angle = wrapToPi(gamma - gear.pressure_angle + normalised_gear_first_angle)
+                gear_exit_angle = wrapToPi(gamma - gear.pressure_angle + normalised_gear_second_angle)
+                visual_gear_entry_angle = wrapToPi(gamma - gear.pressure_angle + visual_normalised_gear_first_angle)
+                visual_gear_exit_angle = wrapToPi(gamma - gear.pressure_angle + visual_normalised_gear_second_angle)
+            case ("driven", gv) if gv <= 0:
+                gear_entry_angle = wrapToPi(pi - gear.pressure_angle + gamma + normalised_gear_first_angle)
+                gear_exit_angle = wrapToPi(pi - gear.pressure_angle + gamma + normalised_gear_second_angle)
+                visual_gear_entry_angle = wrapToPi(pi - gear.pressure_angle + gamma + visual_normalised_gear_first_angle)
+                visual_gear_exit_angle = wrapToPi(pi - gear.pressure_angle + gamma + visual_normalised_gear_second_angle)
+            case ("driving", gv) if gv < 0:
+                gear_exit_angle = wrapToPi(gamma + gear.pressure_angle - normalised_gear_first_angle)
+                gear_entry_angle = wrapToPi(gamma + gear.pressure_angle - normalised_gear_second_angle)
+                visual_gear_exit_angle = wrapToPi(gamma + gear.pressure_angle - visual_normalised_gear_first_angle)
+                visual_gear_entry_angle = wrapToPi(gamma + gear.pressure_angle - visual_normalised_gear_second_angle)
+            case ("driven", gv) if gv > 0:
+                gear_exit_angle = wrapToPi(pi + gear.pressure_angle - gamma - normalised_gear_first_angle)
+                gear_entry_angle = wrapToPi(pi + gear.pressure_angle - gamma - normalised_gear_second_angle)
+                visual_gear_exit_angle = wrapToPi(pi + gear.pressure_angle - gamma - visual_normalised_gear_first_angle)
+                visual_gear_entry_angle = wrapToPi(pi + gear.pressure_angle - gamma - visual_normalised_gear_second_angle)
+        
+        if gear_entry_angle <= gear_exit_angle:
+            gear_engagement = np.logical_and(gear_teeth_pos >= gear_entry_angle, gear_teeth_pos <= gear_exit_angle)
         else:
-            alpha = np.linspace(-alpha1, self.alpha[2], num_points)
+            gear_engagement = np.logical_or(
+                np.logical_and(gear_teeth_pos >= gear_entry_angle, gear_teeth_pos <= pi),
+                np.logical_and(gear_teeth_pos >= -pi, gear_teeth_pos <= gear_exit_angle))
+        return visual_gear_entry_angle, visual_gear_exit_angle, gear_engagement
 
-            Ib0 = (
-                ## primo termine
-                (
-                    (
-                        1
-                        - ((self.teethNumber - 2.5) * np.cos(alpha1) * np.cos(alpha[3]))
-                        / (self.teethNumber * np.cos(self.pressureAngle))
-                    )
-                    ** 3
-                    - (1 - np.cos(alpha1) * np.cos(alpha[2] ** 3))
-                )
-                / (2 * E * L * (np.cos(alpha1) * np.sin(alpha[2]) ** 3))
-            )
+    def _compute_teeth_engagement_angle(self, gear: "SpurGear", gear_teeth_pos: NDArray, gear_engagement: NDArray, gear_mode: str, gear_vel: float, gamma: float):
+        gear_engaged_teeth_position = gear_teeth_pos[gear_engagement]
+        match (gear_mode, gear_vel):
+            case ("driving", gv) if gv >= 0:
+                gear_teeth_engagement_angle = gear_engaged_teeth_position - gamma + gear.pressure_angle
+            case ("driven", gv) if gv <= 0:
+                gear_teeth_engagement_angle = gear_engaged_teeth_position - pi - gamma + gear.pressure_angle
+            case ("driving", gv) if gv < 0:
+                gear_teeth_engagement_angle = gamma + gear.pressure_angle - gear_engaged_teeth_position
+            case ("driven", gv) if gv > 0:
+                gear_teeth_engagement_angle = pi + gamma + gear.pressure_angle - gear_engaged_teeth_position
+        return wrapToPi(gear_teeth_engagement_angle)
 
-            ## secondo termine
+    def _compute_mesh_stiffness(self, gear: "SpurGear", gear_teeth_engagement_angle: NDArray, n_integration_points: int = 50):
+        E = gear.young
+        L = gear.thickness
+        v = gear.poisson
 
-            Ib = (
-                (
-                    3
-                    * (
-                        1
-                        + np.cos(alpha1)
-                        * ((self.alpha[2] - alpha) * np.sin(alpha) - np.cos(alpha))
-                    )
-                    ** 2
-                    * (self.alpha[2] - alpha)
-                    * np.cos(alpha)
-                )
-                / (
-                    2
-                    * E
-                    * L
-                    * (np.sin(alpha) + (self.alpha[2] - alpha) * np.cos(alpha)) ** 3
-                )
-                * engagement
-            )
+        if gear.root_greater_than_base:
+            alpha = np.linspace(-gear_teeth_engagement_angle, gear.alpha[5], n_integration_points)
+        else:
+            alpha = np.linspace(-gear_teeth_engagement_angle, gear.alpha[2], n_integration_points)
+            bending_constant = ((1 - (gear.teeth_number - 2.5) * np.cos(gear_teeth_engagement_angle) * np.cos(gear.alpha[3]) / (gear.teeth_number * np.cos(gear.pressure_angle))) ** 3 - (1 - np.cos(gear_teeth_engagement_angle) * np.cos(gear.alpha[2])) ** 3) / (2 * E * L * (np.cos(gear_teeth_engagement_angle) * np.sin(alpha[2]) ** 3))
+            shear_constant = 1.2 * (1 + v) * np.cos(gear_teeth_engagement_angle) ** 2 * (np.cos(alpha[2]) - (gear.teeth_number - 2.5) * np.cos(alpha[3]) / (gear.teeth_number * np.cos(gear.pressure_angle))) / (E * L * np.sin(alpha[2]))
+            axial_constant = np.sin(gear_teeth_engagement_angle) ** 2 * (np.cos(alpha[2]) - (gear.teeth_number - 2.5) * np.cos(alpha[3]) / (gear.teeth_number * np.cos(gear.pressure_angle))) / (2 * E * L * (np.sin(alpha[2])))
+        
+        bending_integrand = 3 * (1 + np.cos(gear_teeth_engagement_angle) * ((gear.alpha[2] - alpha) * np.sin(alpha) - np.cos(alpha))) ** 2 * (gear.alpha[2] - alpha) * np.cos(alpha) / (2 * E * L * (np.sin(alpha) + (gear.alpha[2] - alpha) * np.cos(alpha)) ** 3)
+        shear_integrand =  1.2 * (1 + v) * (gear.alpha[2] - alpha) * np.cos(alpha) * np.cos(gear_teeth_engagement_angle) ** 2 / (E * L * (np.sin(alpha) + (gear.alpha[2] - alpha) * np.cos(alpha)))
+        axial_integrand = (gear.alpha[2] - alpha) * np.cos(alpha) * np.sin(gear_teeth_engagement_angle) ** 2 / (2 * E * L * (np.sin(alpha) + (gear.alpha[2] - alpha) * np.cos(alpha)))
+        
+        hertz_inverse = 4 * (1 - v) / (pi * E * L)
+        bending_inverse = trapezoid(bending_integrand, x=alpha, axis=0)
+        shear_inverse = trapezoid(shear_integrand, x=alpha, axis=0)
+        axial_inverse = trapezoid(axial_integrand, x=alpha, axis=0)
+        
+        if gear.root_greater_than_base:
+            bending_inverse += bending_constant
+            shear_inverse += shear_constant
+            axial_inverse += axial_constant
 
-            Is0 = (
-                ## primo termine
-                (
-                    1.2
-                    * (1 + v)
-                    * np.cos(alpha1) ** 2
-                    * (
-                        np.cos(alpha[2])
-                        - (
-                            (self.teethNumber - 2.5)
-                            / (self.teethNumber * np.cos(self.pressureAngle))
-                        )
-                        * np.cos(alpha[3])
-                    )
-                )
-                / (E * L * (np.sin(alpha[2])))
-            )
-
-            ## secondo termine
-
-            Is = (
-                (
-                    1.2
-                    * (1 + v)
-                    * (self.alpha[2] - alpha)
-                    * np.cos(alpha)
-                    * np.cos(alpha1) ** 2
-                )
-                / (E * L * (np.sin(alpha) + (self.alpha[2] - alpha) * np.cos(alpha)))
-                * engagement
-            )
-
-            Ia0 = (
-                ## primo termine
-                (
-                    np.sin(alpha1) ** 2
-                    * (
-                        np.cos(
-                            alpha[2]
-                            - (
-                                (self.teethNumber - 2.5)
-                                / (self.teethNumber * np.cos(self.pressureAngle))
-                            )
-                            * np.cos(alpha[3])
-                        )
-                    )
-                )
-                / (2 * E * L * (np.sin(alpha[2])))
-            )
-
-            ## secondo termine
-
-            Ia = (
-                ((self.alpha[2] - alpha) * np.cos(alpha) * np.sin(alpha1) ** 2)
-                / (
-                    2
-                    * E
-                    * L
-                    * (np.sin(alpha) + (self.alpha[2] - alpha) * np.cos(alpha))
-                )
-                * engagement
-            )
-
-        # Integrate over alfa
-        # Kb_inv = np.sum(sc.integrate.trapezoid(Ib, x=alpha, axis=0))
-        # Ks_inv = np.sum(sc.integrate.trapezoid(Is, x=alpha, axis=0))
-        # Ka_inv = np.sum(sc.integrate.trapezoid(Ia, x=alpha, axis=0))
-
-        # if self.root_greater_than_base:
-        #     kb_inv += Ib0
-        #     ks_inv += Is0
-        #     ka_inv += Ia0
-
-        # # Total stiffness
-        # Kt = 1 / (Kb_inv + Ks_inv + Ka_inv)
-        # if all(engagement == 0):
-        #     print("No engagement detected.")
-        # return Kt
-
+        gear_mesh_stiffness_inverse = bending_inverse + shear_inverse + axial_inverse + hertz_inverse
+        gear_mesh_stiffness = np.sum(1 / gear_mesh_stiffness_inverse)
+        return gear_mesh_stiffness
     
-    def _example_mesh_stiffness(self, t, x): ### fix
-        return 100000 + 200 * np.sin(t)
-    
+   
     def _example_mesh_damping(self, t, x): ### fix
-        # return 0
-        return 100 + 20 * np.sin(t)
+        return 2.5*1e3
 
     def plot(self,
              fig: figure,
              state_vector: NDArray,
-             engaged_teeth = None,
+             additional_outputs: dict[str, list[NDArray]],
              n_points_involutes: int = 10,
              n_points_tips: int = 5,
              ) -> tuple[figure, ColumnDataSource, GlyphRenderer]:
@@ -685,6 +512,17 @@ class GearBox(Model):
         t_pos = {}
         sources = {}
         renderers = {}
+
+        try:
+            engaged_teeth = additional_outputs["engaged_teeth"]
+        except:
+            engaged_teeth = None
+        
+        try:
+            engagement_angles = additional_outputs["engagement_angles"]
+        except:
+            engagement_angles = None
+
         for gear_name, gear in zip(self.gear_names, self.gears):
             gear_x_pos_idx, _ = self._get_state_idx_and_name(gear_name=gear_name, gear_state_name="x_pos")
             gear_y_pos_idx, _ = self._get_state_idx_and_name(gear_name=gear_name, gear_state_name="y_pos")
@@ -694,13 +532,14 @@ class GearBox(Model):
             y_pos[gear_name] = state_vector[gear_y_pos_idx]
             t_pos[gear_name] = state_vector[gear_t_pos_idx]
 
-        for gear_name, gear in zip(self.gear_names, self.gears):
+        for gear_idx, (gear_name, gear) in enumerate(zip(self.gear_names, self.gears)):
+            
             fig, teeth_source, teeth_renderer = gear._teeth_plot(
                 fig=fig,
                 x_pos=x_pos[gear_name],
                 y_pos=y_pos[gear_name],
                 t_pos=t_pos[gear_name],
-                engaged_teeth=engaged_teeth,
+                engaged_teeth=engaged_teeth[gear_idx] if engaged_teeth is not None else None,
                 n_points_involutes=n_points_involutes,
                 n_points_tips=n_points_tips,
             )
@@ -725,20 +564,39 @@ class GearBox(Model):
             sources[f"{gear_name}_reference_circles"] = ref_source
             renderers[f"{gear_name}_reference_circles"] = ref_renderer
 
+        for meshed_idx, (driving_gear_name, driven_gear_name) in enumerate(self.meshed_gear_names):
+            fig, ref_source, ref_renderer = self._engagement_angles_plot(
+                fig=fig,
+                driving_gear_name=driving_gear_name,
+                driven_gear_name=driven_gear_name,
+                driving_x_pos=x_pos[driving_gear_name],
+                driving_y_pos=y_pos[driving_gear_name],
+                driven_x_pos=x_pos[driven_gear_name],
+                driven_y_pos=y_pos[driven_gear_name],
+                driving_entry_angle=engagement_angles[meshed_idx][0] if engagement_angles is not None else 0,
+                driving_exit_angle=engagement_angles[meshed_idx][1] if engagement_angles is not None else 0,
+                driven_entry_angle=engagement_angles[meshed_idx][2] if engagement_angles is not None else 0,
+                driven_exit_angle=engagement_angles[meshed_idx][3] if engagement_angles is not None else 0
+            )
+            sources[f"mesh_{meshed_idx}_engagements"] = ref_source
+            renderers[f"mesh_{meshed_idx}_engagements"] = ref_renderer
+
         return fig, sources, renderers
 
     def _update_plot(self,
             sources: dict,
             state_vector: NDArray,
-            engaged_teeth = None,
+            additional_outputs: dict[str, list[NDArray]],
             n_points_involutes: int = 10,
             n_points_tips: int = 5,
         ) -> None:
 
+        engaged_teeth = additional_outputs["engaged_teeth"]
+        engagement_angles = additional_outputs["engagement_angles"]
         x_pos = {}
         y_pos = {}
-        t_pos = {}
-        for gear_name, gear in zip(self.gear_names, self.gears):
+        t_pos = {}  
+        for gear_idx, (gear_name, gear) in enumerate(zip(self.gear_names, self.gears)):
             gear_x_pos_idx, _ = self._get_state_idx_and_name(gear_name=gear_name, gear_state_name="x_pos")
             gear_y_pos_idx, _ = self._get_state_idx_and_name(gear_name=gear_name, gear_state_name="y_pos")
             gear_t_pos_idx, _ = self._get_state_idx_and_name(gear_name=gear_name, gear_state_name="t_pos")
@@ -752,7 +610,7 @@ class GearBox(Model):
                 x_pos=x_pos[gear_name],
                 y_pos=y_pos[gear_name],
                 t_pos=t_pos[gear_name],
-                engaged_teeth=engaged_teeth,
+                engaged_teeth=engaged_teeth[gear_idx],
                 n_points_involutes=n_points_involutes,
                 n_points_tips=n_points_tips,
             )
@@ -768,6 +626,21 @@ class GearBox(Model):
                 x_pos=x_pos[gear_name],
                 y_pos=y_pos[gear_name],
             )
+        
+        for meshed_idx, (driving_gear_name, driven_gear_name) in enumerate(self.meshed_gear_names):
+            self._update_engagement_angles_plot(
+                driving_gear_name=driving_gear_name,
+                driven_gear_name=driven_gear_name,
+                source=sources[f"mesh_{meshed_idx}_engagements"],
+                driving_x_pos=x_pos[driving_gear_name],
+                driving_y_pos=y_pos[driving_gear_name],
+                driven_x_pos=x_pos[driven_gear_name],
+                driven_y_pos=y_pos[driven_gear_name],
+                driving_entry_angle=engagement_angles[meshed_idx][0],
+                driving_exit_angle=engagement_angles[meshed_idx][1],
+                driven_entry_angle=engagement_angles[meshed_idx][2],
+                driven_exit_angle=engagement_angles[meshed_idx][3]
+            )
     
     def _get_gear(self, gear_name: str) -> tuple[int, SpurGear]:
         assert gear_name in self.gear_names, f"Gear '{gear_name}' not found in gearbox'{self.name}'."
@@ -781,3 +654,129 @@ class GearBox(Model):
         state_idx = self.state_names.index(state_name)
         logger.debug("Index of state '%s' for gear '%s' obtained.", gear_state_name, gear_name)
         return state_idx, state_name
+    
+    def _get_additional_outputs(self, time: NDArray, state_matrix: NDArray):
+        engaged_teeth = []
+        for gear in self.gears:
+            engaged_teeth.append(np.zeros((gear.teeth_number, time.shape[0]),dtype=np.bool))
+
+        engagement_angles = []
+        for meshed_idx, (meshed_gears, meshed_dofs_idx) in enumerate(zip(self.meshed_gears,self.meshed_dofs_idx)):
+            engagement_angles.append(np.zeros((4, time.shape[0])))
+
+        for idx, state_vector in enumerate(state_matrix.T):
+            for meshed_idx, (meshed_gears, meshed_dofs_idx) in enumerate(zip(self.meshed_gears,self.meshed_dofs_idx)):
+                driving_gear_idx, driving_gear, driven_gear_idx, driven_gear = meshed_gears
+                driving_dof_x_pos_idx, driving_dof_y_pos_idx, driving_dof_pos_idx, driving_dof_vel_idx, driven_dof_x_pos_idx, driven_dof_y_pos_idx, driven_dof_pos_idx, driven_dof_vel_idx = meshed_dofs_idx
+    
+                driving_gear_teeth_angles = driving_gear._get_teeth_centre_angle(state_vector[driving_dof_pos_idx])
+                driven_gear_teeth_angles = driven_gear._get_teeth_centre_angle(state_vector[driven_dof_pos_idx])
+                gamma = np.atan2(state_vector[driven_dof_y_pos_idx]-state_vector[driving_dof_y_pos_idx], state_vector[driven_dof_x_pos_idx]-state_vector[driving_dof_x_pos_idx])
+                centre_distance = driving_gear.radiuses["pitch"] + driven_gear.radiuses["pitch"]
+                
+                driving_gear_entry_angle, driving_gear_exit_angle, driving_gear_engagement = self._compute_teeth_engagement(driving_gear, driven_gear, driving_gear_teeth_angles, "driving", state_vector[driving_dof_vel_idx], centre_distance, gamma)
+                driven_gear_entry_angle, driven_gear_exit_angle, driven_gear_engagement = self._compute_teeth_engagement(driven_gear, driving_gear, driven_gear_teeth_angles, "driven", state_vector[driven_dof_vel_idx], centre_distance, gamma)
+                engagement_angles[meshed_idx][:,idx] = (driving_gear_entry_angle, driving_gear_exit_angle, driven_gear_entry_angle, driven_gear_exit_angle)
+                engaged_teeth[driving_gear_idx][:,idx] = np.logical_or(engaged_teeth[driving_gear_idx][:,idx],driving_gear_engagement)
+                engaged_teeth[driven_gear_idx][:,idx] = np.logical_or(engaged_teeth[driven_gear_idx][:,idx],driven_gear_engagement)
+
+        return {"engagement_angles": engagement_angles,"engaged_teeth": engaged_teeth}
+    
+    def _engagement_angles_plot(
+            self,
+            fig: figure,
+            driving_gear_name,
+            driven_gear_name,
+            driving_x_pos = 0,
+            driving_y_pos = 0,
+            driven_x_pos = 0,
+            driven_y_pos = 0,
+            driving_entry_angle = -pi/2,
+            driving_exit_angle = pi/2,
+            driven_entry_angle = -pi/2,
+            driven_exit_angle = pi/2
+            ):
+        
+        _, driving_gear = self._get_gear(driving_gear_name)
+        _, driven_gear = self._get_gear(driven_gear_name)
+        driving_entry_xs = [driving_x_pos + driving_gear.radiuses["root"] * np.cos(driving_entry_angle),
+                            driving_x_pos + driving_gear.radiuses["addendum"] * np.cos(driving_entry_angle)]
+        driving_entry_ys = [driving_y_pos + driving_gear.radiuses["root"] * np.sin(driving_entry_angle),
+                            driving_y_pos + driving_gear.radiuses["addendum"] * np.sin(driving_entry_angle)]
+        driving_entry_color = ["blue"]
+        driving_exit_xs = [driving_x_pos + driving_gear.radiuses["root"] * np.cos(driving_exit_angle),
+                            driving_x_pos + driving_gear.radiuses["addendum"] * np.cos(driving_exit_angle)]
+        driving_exit_ys = [driving_y_pos + driving_gear.radiuses["root"] * np.sin(driving_exit_angle),
+                            driving_y_pos + driving_gear.radiuses["addendum"] * np.sin(driving_exit_angle)]
+        driving_exit_color = ["red"]
+        driven_entry_xs = [driven_x_pos + driven_gear.radiuses["root"] * np.cos(driven_entry_angle),
+                            driven_x_pos + driven_gear.radiuses["addendum"] * np.cos(driven_entry_angle)]
+        driven_entry_ys = [driven_y_pos + driven_gear.radiuses["root"] * np.sin(driven_entry_angle),
+                            driven_y_pos + driven_gear.radiuses["addendum"] * np.sin(driven_entry_angle)]
+        driven_entry_color = ["blue"]
+        driven_exit_xs = [driven_x_pos + driven_gear.radiuses["root"] * np.cos(driven_exit_angle),
+                            driven_x_pos + driven_gear.radiuses["addendum"] * np.cos(driven_exit_angle)]
+        driven_exit_ys = [driven_y_pos + driven_gear.radiuses["root"] * np.sin(driven_exit_angle),
+                            driven_y_pos + driven_gear.radiuses["addendum"] * np.sin(driven_exit_angle)]
+        driven_exit_color = ["red"]
+
+        source = ColumnDataSource(data=dict(
+            xs=[driving_entry_xs,driving_exit_xs,driven_entry_xs,driven_exit_xs],
+            ys=[driving_entry_ys,driving_exit_ys,driven_entry_ys,driven_exit_ys],
+            colors=driving_entry_color+driving_exit_color+driven_entry_color+driven_exit_color
+        ))
+
+        renderer = fig.multi_line(
+            xs="xs",
+            ys="ys",
+            source=source,
+            line_color="colors",
+            line_width=1,
+            line_dash="dashed"
+        )
+
+        return fig, source, renderer
+    
+    def _update_engagement_angles_plot(
+            self,
+            driving_gear_name,
+            driven_gear_name,
+            source=ColumnDataSource,
+            driving_x_pos = 0,
+            driving_y_pos = 0,
+            driven_x_pos = 0,
+            driven_y_pos = 0,
+            driving_entry_angle = -pi/2,
+            driving_exit_angle = pi/2,
+            driven_entry_angle = -pi/2,
+            driven_exit_angle = pi/2
+            ):
+        
+        _, driving_gear = self._get_gear(driving_gear_name)
+        _, driven_gear = self._get_gear(driven_gear_name)
+        driving_entry_xs = [driving_x_pos + driving_gear.radiuses["root"] * np.cos(driving_entry_angle),
+                            driving_x_pos + driving_gear.radiuses["addendum"] * np.cos(driving_entry_angle)]
+        driving_entry_ys = [driving_y_pos + driving_gear.radiuses["root"] * np.sin(driving_entry_angle),
+                            driving_y_pos + driving_gear.radiuses["addendum"] * np.sin(driving_entry_angle)]
+        driving_entry_color = ["blue"]
+        driving_exit_xs = [driving_x_pos + driving_gear.radiuses["root"] * np.cos(driving_exit_angle),
+                            driving_x_pos + driving_gear.radiuses["addendum"] * np.cos(driving_exit_angle)]
+        driving_exit_ys = [driving_y_pos + driving_gear.radiuses["root"] * np.sin(driving_exit_angle),
+                            driving_y_pos + driving_gear.radiuses["addendum"] * np.sin(driving_exit_angle)]
+        driving_exit_color = ["red"]
+        driven_entry_xs = [driven_x_pos + driven_gear.radiuses["root"] * np.cos(driven_entry_angle),
+                            driven_x_pos + driven_gear.radiuses["addendum"] * np.cos(driven_entry_angle)]
+        driven_entry_ys = [driven_y_pos + driven_gear.radiuses["root"] * np.sin(driven_entry_angle),
+                            driven_y_pos + driven_gear.radiuses["addendum"] * np.sin(driven_entry_angle)]
+        driven_entry_color = ["blue"]
+        driven_exit_xs = [driven_x_pos + driven_gear.radiuses["root"] * np.cos(driven_exit_angle),
+                            driven_x_pos + driven_gear.radiuses["addendum"] * np.cos(driven_exit_angle)]
+        driven_exit_ys = [driven_y_pos + driven_gear.radiuses["root"] * np.sin(driven_exit_angle),
+                            driven_y_pos + driven_gear.radiuses["addendum"] * np.sin(driven_exit_angle)]
+        driven_exit_color = ["red"]
+
+        source.data = dict(
+            xs=[driving_entry_xs,driving_exit_xs,driven_entry_xs,driven_exit_xs],
+            ys=[driving_entry_ys,driving_exit_ys,driven_entry_ys,driven_exit_ys],
+            colors=driving_entry_color+driving_exit_color+driven_entry_color+driven_exit_color
+        )

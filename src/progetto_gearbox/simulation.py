@@ -50,6 +50,7 @@ class Simulation:
             "states": solution.y,
             "inputs": self.model.get_inputs(solution.t),
             "outputs": self.model.get_outputs(solution.t, solution.y),
+            "additional_outputs": self.model._get_additional_outputs(solution.t,solution.y)
         }
         logger.debug("Simulation solution stored.")
         logger.info("Simulation '%s' solved.", self.name)
@@ -81,10 +82,7 @@ class Simulation:
                 init_condition_clause = True
                 logger.error("Initial condition for state %s in model %s was not provided.", state_name, self.model.name)
 
-        assert init_condition_clause == False, "Initial conditions were not complete. See above the missing ones."
-        
-            
-        
+        assert init_condition_clause == False, "Initial conditions were not complete. See above the missing ones."  
         logger.info("Model status for simulation assessed.")
 
     def states_plot(self, grids: list, shared_x_range):
@@ -210,7 +208,7 @@ class Simulation:
         logger.info("Creating simulation initial condition plot for '%s'...", self.name)
         output_file(f"plots/{self.name}_initial_conditions_plots.html")
         fig = figure(match_aspect=True)
-        fig, _, _ = self.model.plot(fig=fig, state_vector=self.initial_conditions)
+        fig, _, _ = self.model.plot(fig=fig, state_vector=self.initial_conditions, additional_outputs={})
         show(fig)
         logger.info("Simulation initial condition plot created for '%s'.", self.name)
 
@@ -220,9 +218,10 @@ class Simulation:
         states = self.solution["states"]
         time_vector = self.solution["time"]
         n_frames = self.solution["states"].shape[1]
+        additional_outputs = {key: [value[:,0] for value in values] for key, values in self.solution["additional_outputs"].items()}
 
-        fig = figure(match_aspect=True)
-        fig, sources, _ = self.model.plot(fig=fig, state_vector=self.solution["states"][:, 0])
+        fig = figure(match_aspect=True,width=1500, height=900)
+        fig, sources, _ = self.model.plot(fig=fig, state_vector=self.solution["states"][:, 0], additional_outputs=additional_outputs)
 
         speed_options = ["0.05x","0.1x","0.5x", "1x", "2x", "5x", "10x"]
         speed_values = [0.05, 0.1, 0.5, 1.0, 2.0, 5.0, 10.0]
@@ -250,8 +249,8 @@ class Simulation:
             i = int(current_time / self.deltat)
             i = max(0, min(i, n_frames - 1))
             state_vector = states[:, i]
-            self.model._update_plot(sources, state_vector)
-
+            additional_outputs = {key: [value[:,i] for value in values] for key, values in self.solution["additional_outputs"].items()}
+            self.model._update_plot(sources=sources,state_vector=state_vector,additional_outputs=additional_outputs)
             time_div.text = f"Time: {current_time:.2f} / {t_end:.2f} s"
 
         def _on_speed_change(attr: str, old: str, new: str) -> None:
