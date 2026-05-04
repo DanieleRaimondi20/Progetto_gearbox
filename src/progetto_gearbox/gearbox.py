@@ -23,6 +23,7 @@ class GearBox(Model):
         super().__init__(name)
         self.gears: list[SpurGear] = []
         self.gear_names: list[str] = []
+        self.gear_damages: list[NDArray] = []
         self.meshed_gear_names: list[tuple[str, str]] = []  # List of tuples (driving_gear_name, driven_gear_name)
         self.meshed_gears: list[tuple[int,'SpurGear',int,'SpurGear']] = []
         self.meshed_dofs_idx: list[tuple[int,int,int,int]] = []
@@ -38,13 +39,16 @@ class GearBox(Model):
 
         # self.lumped_masses: list[tuple[str, float]] = []  # List
         
-    def add_gears(self, gears: list[SpurGear]) -> None:
+    def add_gears(self, gears: list[SpurGear], damages: list[NDArray]) -> None:
         logger.info("Adding gears to the gearbox...")
         
-        for gear in gears:
+        for gear, gear_damages in zip(gears, damages):
             logger.debug("Adding gear '%s' to the gearbox...",gear.name)
             self.gears.append(deepcopy(gear))
             self.gear_names.append(gear.name)
+            assert np.logical_and(np.all(gear_damages >= 0), np.all(gear_damages <= 1)), "'damages' must be a list of NDArrays, with the same length of 'gears', and with all elements within [0; 1]"
+        
+        self.gear_damages.extend(deepcopy(damages))
         self._gears_added = True
             
     def get_state_space(self) -> None:
@@ -468,21 +472,21 @@ class GearBox(Model):
     def _compute_mesh_stiffness(self, gear: "SpurGear", gear_teeth_engagement_angle: NDArray, n_integration_points: int = 50):
         E = gear.young
         L = gear.thickness
-        v = gear.poisson
+        nu = gear.poisson
 
         if gear.root_greater_than_base:
             alpha = np.linspace(-gear_teeth_engagement_angle, gear.alpha[5], n_integration_points)
         else:
             alpha = np.linspace(-gear_teeth_engagement_angle, gear.alpha[2], n_integration_points)
             bending_constant = ((1 - (gear.teeth_number - 2.5) * np.cos(gear_teeth_engagement_angle) * np.cos(gear.alpha[3]) / (gear.teeth_number * np.cos(gear.pressure_angle))) ** 3 - (1 - np.cos(gear_teeth_engagement_angle) * np.cos(gear.alpha[2])) ** 3) / (2 * E * L * (np.cos(gear_teeth_engagement_angle) * np.sin(alpha[2]) ** 3))
-            shear_constant = 1.2 * (1 + v) * np.cos(gear_teeth_engagement_angle) ** 2 * (np.cos(alpha[2]) - (gear.teeth_number - 2.5) * np.cos(alpha[3]) / (gear.teeth_number * np.cos(gear.pressure_angle))) / (E * L * np.sin(alpha[2]))
+            shear_constant = 1.2 * (1 + nu) * np.cos(gear_teeth_engagement_angle) ** 2 * (np.cos(alpha[2]) - (gear.teeth_number - 2.5) * np.cos(alpha[3]) / (gear.teeth_number * np.cos(gear.pressure_angle))) / (E * L * np.sin(alpha[2]))
             axial_constant = np.sin(gear_teeth_engagement_angle) ** 2 * (np.cos(alpha[2]) - (gear.teeth_number - 2.5) * np.cos(alpha[3]) / (gear.teeth_number * np.cos(gear.pressure_angle))) / (2 * E * L * (np.sin(alpha[2])))
         
         bending_integrand = 3 * (1 + np.cos(gear_teeth_engagement_angle) * ((gear.alpha[2] - alpha) * np.sin(alpha) - np.cos(alpha))) ** 2 * (gear.alpha[2] - alpha) * np.cos(alpha) / (2 * E * L * (np.sin(alpha) + (gear.alpha[2] - alpha) * np.cos(alpha)) ** 3)
-        shear_integrand =  1.2 * (1 + v) * (gear.alpha[2] - alpha) * np.cos(alpha) * np.cos(gear_teeth_engagement_angle) ** 2 / (E * L * (np.sin(alpha) + (gear.alpha[2] - alpha) * np.cos(alpha)))
+        shear_integrand =  1.2 * (1 + nu) * (gear.alpha[2] - alpha) * np.cos(alpha) * np.cos(gear_teeth_engagement_angle) ** 2 / (E * L * (np.sin(alpha) + (gear.alpha[2] - alpha) * np.cos(alpha)))
         axial_integrand = (gear.alpha[2] - alpha) * np.cos(alpha) * np.sin(gear_teeth_engagement_angle) ** 2 / (2 * E * L * (np.sin(alpha) + (gear.alpha[2] - alpha) * np.cos(alpha)))
         
-        hertz_inverse = 4 * (1 - v ** 2) / (pi * E * L)
+        hertz_inverse = 4 * (1 - nu ** 2) / (pi * E * L)
         bending_inverse = trapezoid(bending_integrand, x=alpha, axis=0)
         shear_inverse = trapezoid(shear_integrand, x=alpha, axis=0)
         axial_inverse = trapezoid(axial_integrand, x=alpha, axis=0)
@@ -497,22 +501,37 @@ class GearBox(Model):
         return gear_mesh_stiffness
     
    
-    def meshStiffness_crack(self, engagement, alpha1):
+    def _compute_mesh_stiffness_damaged(self, gear: "SpurGear", gear_teeth_engagement_angle: NDArray, n_integration_points: int = 50):
+        
         # Parameters
-        E = self.young
-        L = self.thickness
-        v = self.poisson
+        E = gear.young
+        L = gear.thickness
+        nu = gear.poisson
+        v = pi/4
+        hq1 = damage * hr
+        ha = hr/2 - hq1
+        q1 = hq1 / np.sin(v)
 
-        num_points = 100
+        if gear.root_greater_than_base:
+            pass
+        else:
+            """ casi su ha, hc, alpha1 --< ogni dente ha un suo alpha1
+                
+                se damaga <= 50% --> q1 --> ha
+                se damage < 50% --> q2 --> hc """
+            alphao = gear.alpha[4] - gear._compute_phi_angle(diameter=gear.diameters["addendum"])
+            ho = gear.radiuses["base"] * (np.sin(alphao) + (gear.alpha[2]-alphao) * np.cos(alphao))
+            ha = gear.radiuses["base"] * np.sin(alpha[2]) - q1 * np.sin(v)
+            pass
         
         # Define alfa range
  
         #phig_r - self.angle_at_base/2
         #np.linspace(0, 1, num_points)[None, :] * (stop - start)[:, None] + start[:, None]
         
-        ha =
-        hc =
-        h0 =
+        # ha =
+        # hc =
+        # h0 =
         
         if self.root_greater_than_base: #case 1 from paper
                 # Compute Ib, Is, Ia
@@ -621,6 +640,8 @@ class GearBox(Model):
         Kt = 1 / (Kb_inv + Ks_inv + Ka_inv)
         if all(engagement == 0):
             print("No engagement detected.")
+        
+        raise NotImplementedError
         return Kt
 
 

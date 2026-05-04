@@ -33,7 +33,7 @@ def create_gearbox():
     gearbox = GearBox(name="gearbox")
     gear = create_gear()
     pinion = create_pinion()
-    gearbox.add_gears([gear, pinion])
+    gearbox.add_gears([gear, pinion], [np.zeros(gear.teeth_number),np.zeros(pinion.teeth_number)])
     return gearbox
 
 
