@@ -327,7 +327,8 @@ class GearBox(Model):
 
             driving_mesh_stiffness = self._compute_mesh_stiffness(gear=driving_gear, gear_teeth_engagement_angle=driving_gear_teeth_engagement_angle)
             driven_mesh_stiffness = self._compute_mesh_stiffness(gear=driven_gear, gear_teeth_engagement_angle=driven_gear_teeth_engagement_angle)
-            mesh_stiffness = driving_mesh_stiffness + driven_mesh_stiffness # IDK
+            mesh_stiffness = 1/(1/driving_mesh_stiffness + 1/driven_mesh_stiffness)
+            raise NotImplementedError
             mesh_damping = self._example_mesh_damping(time, state_vector)
             
             delta_state_matrix[driving_dof_vel_idx, driving_dof_pos_idx] -= mesh_stiffness*driving_gear.radiuses["base"]**2/driving_gear.inertia["t"]
@@ -481,7 +482,7 @@ class GearBox(Model):
         shear_integrand =  1.2 * (1 + v) * (gear.alpha[2] - alpha) * np.cos(alpha) * np.cos(gear_teeth_engagement_angle) ** 2 / (E * L * (np.sin(alpha) + (gear.alpha[2] - alpha) * np.cos(alpha)))
         axial_integrand = (gear.alpha[2] - alpha) * np.cos(alpha) * np.sin(gear_teeth_engagement_angle) ** 2 / (2 * E * L * (np.sin(alpha) + (gear.alpha[2] - alpha) * np.cos(alpha)))
         
-        hertz_inverse = 4 * (1 - v) / (pi * E * L)
+        hertz_inverse = 4 * (1 - v ** 2) / (pi * E * L)
         bending_inverse = trapezoid(bending_integrand, x=alpha, axis=0)
         shear_inverse = trapezoid(shear_integrand, x=alpha, axis=0)
         axial_inverse = trapezoid(axial_integrand, x=alpha, axis=0)

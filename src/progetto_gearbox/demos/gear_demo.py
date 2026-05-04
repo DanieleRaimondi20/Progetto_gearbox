@@ -16,8 +16,8 @@ logger = getLogger(__name__)
 def create_gear() -> SpurGear:
     logger.info("Creating a gear...")
     gear = SpurGear(name="gear")
-    gear.set_material(young=2.068 * 1e5, poisson=0.3)
-    gear.set_geometry(module=3.2,teeth_number=31,thickness=0.0381 * 1e3)
+    gear.set_material(young=2.068 * 1e11, poisson=0.3)
+    gear.set_geometry(module=3.2,teeth_number=31,thickness=0.0381)
     gear.set_inertias(inertia_x=1,inertia_y=1,inertia_t=0.5)
     gear.get_state_space()
     return gear
