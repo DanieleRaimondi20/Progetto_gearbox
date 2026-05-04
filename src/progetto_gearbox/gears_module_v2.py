@@ -173,7 +173,7 @@ class spurGear:
         """to be updated"""
         pass
     
-    def meshStiffness(self, engagement, alpha1):
+    def meshStiffness_ok(self, engagement, alpha1):
         # Parameters
         E = self.young
         L = self.thickness
@@ -276,6 +276,132 @@ class spurGear:
             kb_inv += Ib0
             ks_inv += Is0
             ka_inv += Ia0
+        
+        # Total stiffness
+        Kt = 1 / (Kb_inv + Ks_inv + Ka_inv)
+        if all(engagement == 0):
+            print("No engagement detected.")
+        return Kt
+    
+    def meshStiffness_crack(self, engagement, alpha1):
+        # Parameters
+        E = self.young
+        L = self.thickness
+        v = self.poisson
+
+        num_points = 100
+        
+        # Define alfa range
+ 
+        #phig_r - self.angle_at_base/2
+        #np.linspace(0, 1, num_points)[None, :] * (stop - start)[:, None] + start[:, None]
+        
+        ha =
+        hc =
+        h0 =
+        
+        if self.root_greater_than_base: #case 1 from paper
+                # Compute Ib, Is, Ia
+            alpha = np.linspace(-alpha1, self.alpha[5], num_points)
+            match ("mode", ha, hc, h0, alpha1, alpha4, alphaa, alphac): #resta da includere engagement
+                
+                case ("condition 1",ha, hc, h0, alpha1, alpha4, alphaa, alphac) if ha > h0 and alpha1 > alpha4:
+                    Ib0 = (12*np.sin(alpha)*((self.teethNumber*np.cos(self.pressureAngle))/(self.teethNumber-2.5)-(np.cos(alpha)+np.cos(alpha3)-np.cos(alphar)-(q1*np.cos(v))/(root_radius))*np.cos(alpha1))**2)/(E*L(np.sin(alpha3)+np.sin(alpha)-(q1*np.sin(v))/(root_radius))**3)
+                    Ib1 = (4*(1-((self.teethNumber-2.5)*np.cos(alpha1)*np.cos(alpha3))/(self.teethNumber*np.cos(self.pressureAngle)))**3-4(1-np.cos(alpha1)*np.cos(alpha2)**3))/(E*L*np.cos(alpha1)*(2*np.sin(alpha2)-(q1*np.sin(v))/(base_radius))**3)
+                    Ib2 = (12*(1+np.cos(alpha1)*((alpha2-alpha)*np.sin(alpha)-np.cos(alpha)))**2*(alpha2-alpha)*np.cos(alpha))/(E*L*(np.sin(alpha2)-(q1*np.sin(v))/(root_radius)+np.sin(alpha)+(alpha2-alpha)*np.cos(alpha)))**3
+                    Ib3 = 3*(1+np.cos(alpha1)*((alpha2-alpha)*np.sin(alpha)-np.cos(alpha)))**2*(alpha2-alpha)*np.cos(alpha)/(2*E*L*(np.sin(alpha)+(alpha2-alpha)*np.cos(alpha))**3)
+                    Ib = Ib0 + Ib1 + Ib2 + Ib3
+            
+                    Is0 = (2.4*(1+v)*np.cos(alpha1)**2(np.sin(alpha)))/(E*L(np.sin(alpha3)-(q1*np.sin(v))/(root_radius)*np.sin(v))**3)
+                    Is1 = (2.4*(1+v)*np.cos(alpha1)**2*(np.cos(alpha2)-(self.teethNumber-2.5)/(self.teethNumber*np.cos(self.pressureAngle))*np.cos(alpha3)))/(E*L*(2*np.sin(alpha2)-(q1*np.sin(v))/(base_radius)))
+                    Is2 = (2.4*(1+v)*(alpha2-alpha)*np.cos(alpha)*np.cos(alpha1)**2)/(E*L*(np.sin(alpha2)-(q1*np.sin(v))/(base_radius)+np.sin(alpha)+(alpha2-alpha)*np.cos(alpha)))
+                    Is3 = (1.2*(1+v)*(alpha2-alpha)*np.cos(alpha)*np.cos(alpha1)**2)/(E*L*(np.sin(alpha)+(alpha2-alpha)*np.cos(alpha)))
+                    Is = Is0 + Is1 + Is2 + Is3
+                    
+                case ("condition 2",ha, hc, h0, alpha1, alpha4, alphaa, alphac) if ha < h0 or (ha > h0 and alpha1 > alpha4):
+                    Ib0 = (12*np.sin(alpha)*((self.teethNumber*np.cos(self.pressureAngle))/(self.teethNumber-2.5)-(np.cos(alpha)+np.cos(alpha3)-np.cos(alphar)-(q1*np.cos(v))/(root_radius))*np.cos(alpha1))**2)/(E*L(np.sin(alpha3)+np.sin(alpha)-(q1*np.sin(v))/(root_radius))**3)
+                    Ib1 = (4*(1-((self.teethNumber-2.5)*np.cos(alpha1)*np.cos(alpha3))/(self.teethNumber*np.cos(self.pressureAngle)))**3-4(1-np.cos(alpha1)*np.cos(alpha2)**3))/(E*L*np.cos(alpha1)*(2*np.sin(alpha2)-(q1*np.sin(v))/(base_radius))**3)
+                    Ib2 = (12*(1+np.cos(alpha1)*((alpha2-alpha)*np.sin(alpha)-np.cos(alpha)))**2*(alpha2-alpha)*np.cos(alpha))/(E*L*(np.sin(alpha2)-(q1*np.sin(v))/(root_radius)+np.sin(alpha)+(alpha2-alpha)*np.cos(alpha)))**3
+                    Ib = Ib0 + Ib1 + Ib2
+                    
+                    Is0 = (2.4*(1+v)*np.cos(alpha1)**2(np.sin(alpha)))/(E*L(np.sin(alpha3)-(q1*np.sin(v))/(root_radius)*np.sin(v))**3)
+                    Is1 = (2.4*(1+v)*np.cos(alpha1)**2*(np.cos(alpha2)-(self.teethNumber-2.5)/(self.teethNumber*np.cos(self.pressureAngle))*np.cos(alpha3)))/(E*L*(2*np.sin(alpha2)-(q1*np.sin(v))/(base_radius)))
+                    Is2 = (2.4*(1+v)*(alpha2-alpha)*np.cos(alpha)*np.cos(alpha1)**2)/(E*L*(np.sin(alpha2)-(q1*np.sin(v))/(base_radius)+np.sin(alpha)+(alpha2-alpha)*np.cos(alpha)))
+                    Is = Is0 + Is1 + Is2
+                    
+                case ("condition 3",ha, hc, h0, alpha1, alpha4, alphaa, alphac) if hc < h0 or (hc > h0 and alpha1 > alphac):
+                    Ib0 = (12*np.sin(alpha)*((self.teethNumber*np.cos(self.pressureAngle))/(self.teethNumber-2.5)-(np.cos(alpha)+np.cos(alpha3)-np.cos(alphar)-(((np.sin(alpha3)/(np.sin(v)))-(q2/root_radius))*np.cos(v))/(root_radius))*np.cos(alpha1))**2)/(E*L(np.sin(alpha)-(q2*np.sin(v))/(root_radius))**3)
+                    Ib1 = (4*(1-((self.teethNumber-2.5)*np.cos(alpha1)*np.cos(alpha3))/(self.teethNumber*np.cos(self.pressureAngle)))**3-4(1-np.cos(alpha1)*np.cos(alpha2)**3))/(E*L*np.cos(alpha1)*(np.sin(alpha2)-(q2*np.sin(v))/(base_radius))**3)
+                    Ib2 = (12*(1+np.cos(alpha1)*((alpha2-alpha)*np.sin(alpha)-np.cos(alpha)))**2*(alpha2-alpha)*np.cos(alpha))/(E*L*(np.sin(alpha)+(alpha2-alpha)*np.cos(alpha)+np.sin(alpha)-(q2*np.sin(v))/(base_radius)))**3
+                    Ib = Ib0 + Ib1 + Ib2
+                    
+                    Is0 = (2.4*(1+v)*np.cos(alpha1)**2(np.sin(alpha)))/(E*L(np.sin(alpha)-(q2*np.sin(v))/(root_radius)*np.sin(v))**3)
+                    Is1 = (2.4*(1+v)*np.cos(alpha1)**2*(np.cos(alpha2)-(self.teethNumber-2.5)/(self.teethNumber*np.cos(self.pressureAngle))*np.cos(alpha3)))/(E*L*(np.sin(alpha2)-(q2*np.sin(v))/(base_radius)))
+                    Is2 = (2.4*(1+v)*(alpha2-alpha)*np.cos(alpha)*np.cos(alpha1)**2)/(E*L*(np.sin(alpha)+(alpha2-alpha)*np.cos(alpha)-(q2*np.sin(v))/(base_radius)))
+                    Is = Is0 + Is1 + Is2
+                    
+                case ("condition 4",ha, hc, h0, alpha1, alpha4, alphaa, alphac) if hc >= h0 and alpha1 > alphac:
+                    Ib0 = (12*np.sin(alpha)*((self.teethNumber*np.cos(self.pressureAngle))/(self.teethNumber-2.5)-(np.cos(alpha)+np.cos(alpha3)-np.cos(alphar)-(((np.sin(alpha3)/(np.sin(v)))-(q2/root_radius))*np.cos(v))/(root_radius))*np.cos(alpha1))**2)/(E*L(np.sin(alpha)-(q2*np.sin(v))/(root_radius))**3)
+                    Ib1 = (4*(1-((self.teethNumber-2.5)*np.cos(alpha1)*np.cos(alpha3))/(self.teethNumber*np.cos(self.pressureAngle)))**3-4(1-np.cos(alpha1)*np.cos(alpha2)**3))/(E*L*np.cos(alpha1)*(np.sin(alpha2)-(q2*np.sin(v))/(base_radius))**3)
+                    Ib2 = (12*(1+np.cos(alpha1)*((alpha2-alpha)*np.sin(alpha)-np.cos(alpha)))**2*(alpha2-alpha)*np.cos(alpha))/(E*L*(np.sin(alpha)+(alpha2-alpha)*np.cos(alpha)+np.sin(alpha)-(q2*np.sin(v))/(base_radius)))**3
+                    Ib = Ib0 + Ib1 + Ib2
+                    
+                    Is0 = (2.4*(1+v)*np.cos(alpha1)**2(np.sin(alpha)))/(E*L(np.sin(alpha)-(q2*np.sin(v))/(root_radius)*np.sin(v))**3)
+                    Is1 = (2.4*(1+v)*np.cos(alpha1)**2*(np.cos(alpha2)-(self.teethNumber-2.5)/(self.teethNumber*np.cos(self.pressureAngle))*np.cos(alpha3)))/(E*L*(np.sin(alpha2)-(q2*np.sin(v))/(base_radius)))
+                    Is2 = (2.4*(1+v)*(alpha2-alpha)*np.cos(alpha)*np.cos(alpha1)**2)/(E*L*(np.sin(alpha)+(alpha2-alpha)*np.cos(alpha)-(q2*np.sin(v))/(base_radius)))
+                    Is = Is0 + Is1 + Is2
+            
+        else: #case 2 from paper
+            alpha = np.linspace(-alpha1, self.alpha[2], num_points)
+            
+            match ("mode", ha, hc, h0, alpha1, alpha4, alphaa, alphac):
+                
+                case ("condition 1", ha, hc, h0, alpha1, alpha4, alphaa, alphac) if ha >= h0 and alpha1 > alphaa:
+                    Ib0 = (12*np.sin(alpha)*((self.teethNumber*np.cos(self.pressureAngle))/(self.teethNumber-2.5)-(np.cos(alpha)+np.cos(alpha3)-np.cos(alphar)-((q1/root_radius)*np.cos(v))/(root_radius))*np.cos(alpha1))**2)/(E*L(np.sin(alpha4)-(q1*np.sin(v))/(root_radius)+np.sin(alpha))**3)
+                    Ib1 = (12*(1+np.cos(alpha1)*((alpha2-alpha)*np.sin(alpha)-np.cos(alpha)))**2*(alpha2-alpha)*np.cos(alpha))/(E*L*(np.sin(alpha)+(alpha2-alpha)*np.cos(alpha)+np.sin(alpha)-(q1*np.sin(v))/(base_radius)+((self.teethNumber-2.5)/(self.teethNumber*np.cos(alpha0)))*np.sin(alpha4))**3)
+                    Ib2 = 3*(1+np.cos(alpha1)*((alpha2-alpha)*np.sin(alpha)-np.cos(alpha)))**2*(alpha2-alpha)*np.cos(alpha)/(2*E*L*(np.sin(alpha)+(alpha2-alpha)*np.cos(alpha))**3)
+                    Ib = Ib0 + Ib1 + Ib2
+                    
+                    Is0 = (2.4*(1+v)*np.cos(alpha1)**2(np.sin(alpha)))/(E*L(np.sin(alpha3)-(q1*np.sin(v))/(root_radius)*np.sin(v))**3)
+                    Is1 = (1.2*(1+v)*(alpha2-alpha)*np.cos(alpha)*np.cos(alpha1)**2)/(E*L*(np.sin(alpha)+(alpha2-alpha)*np.cos(alpha)))
+                    Is2 = (2.4*(1+v)*(alpha2-alpha)*np.cos(alpha)*np.cos(alpha1)**2)/(E*L*(((self.teethNumber-2.5)/(self.teethNumber*np.cos(self.pressureAngle)))*np.sin(alpha4)-(q1*np.sin(v))/(base_radius)+np.sin(alpha)+(alpha2-alpha)*np.cos(alpha)))
+                    Is = Is0 + Is1
+                    
+                case ("condition 2", ha, hc, h0, alpha1, alpha4, alphaa, alphac) if ha < h0 or (ha >= h0 and alpha1 <= alphaa):
+                    Ib0 = (12*np.sin(alpha)*((self.teethNumber*np.cos(self.pressureAngle))/(self.teethNumber-2.5)-(np.cos(alpha)+np.cos(alpha3)-np.cos(alphar)-((q1/root_radius)*np.cos(v))/(root_radius))*np.cos(alpha1))**2)/(E*L(np.sin(alpha4)-(q1*np.sin(v))/(root_radius)+np.sin(alpha))**3)
+                    Ib1 = (12*(1+np.cos(alpha1)*((alpha2-alpha)*np.sin(alpha)-np.cos(alpha)))**2*(alpha2-alpha)*np.cos(alpha))/(E*L*(np.sin(alpha)+(alpha2-alpha)*np.cos(alpha)+np.sin(alpha)-(q1*np.sin(v))/(base_radius)+((self.teethNumber-2.5)/(self.teethNumber*np.cos(alpha0)))*np.sin(alpha4))**3)
+                    Ib = Ib0 + Ib1
+                    
+                    Is0 = (2.4*(1+v)*np.cos(alpha1)**2(np.sin(alpha)))/(E*L(np.sin(alpha3)-(q1*np.sin(v))/(root_radius)*np.sin(v))**3)
+                    Is1 = (2.4*(1+v)*(alpha2-alpha)*np.cos(alpha)*np.cos(alpha1)**2)/(E*L*(((self.teethNumber-2.5)/(self.teethNumber*np.cos(self.pressureAngle)))*np.sin(alpha4)-(q1*np.sin(v))/(base_radius)+np.sin(alpha)+(alpha2-alpha)*np.cos(alpha)))
+                    Is = Is0 + Is1
+                    
+                case ("condition 3", ha, hc, h0, alpha1, alpha4, alphaa, alphac) if hc < h0 or (hc >= h0 and alpha1 <= alphac):
+                    Ib0 = (12*np.sin(alpha)*((self.teethNumber*np.cos(self.pressureAngle))/(self.teethNumber-2.5)-(np.cos(alpha)+np.cos(alpha3)-np.cos(alphar)-(((np.sin(alpha4)/np.sin(v))-(q2/root_radius))*np.cos(v))/(root_radius))*np.cos(alpha1))**2)/(E*L(-(q2*np.sin(v))/(root_radius)+np.sin(alpha))**3)
+                    Ib1 = (12*(1+np.cos(alpha1)*((alpha2-alpha)*np.sin(alpha)-np.cos(alpha)))**2*(alpha2-alpha)*np.cos(alpha))/(E*L*(np.sin(alpha)+(alpha2-alpha)*np.cos(alpha)+np.sin(alpha)-(q2*np.sin(v))/(base_radius))**3)
+                    Ib = Ib0 + Ib1
+                    
+                    Is0 = (2.4*(1+v)*np.cos(alpha1)**2(np.sin(alpha)))/(E*L(np.sin(alpha)-(q2*np.sin(v))/(root_radius)*np.sin(v))**3)
+                    Is1 = (2.4*(1+v)*(alpha2-alpha)*np.cos(alpha)*np.cos(alpha1)**2)/(E*L*(np.sin(alpha)-(q2*np.sin(v))/(base_radius)+(alpha2-alpha)*np.cos(alpha)))
+                    Is = Is0 + Is1
+                    
+                case ("condition 4", ha, hc, h0, alpha1, alpha4, alphaa, alphac) if hc >= h0 and alpha1 > alphac:
+                    Ib0 = (12*np.sin(alpha)*((self.teethNumber*np.cos(self.pressureAngle))/(self.teethNumber-2.5)-(np.cos(alpha)+np.cos(alpha3)-np.cos(alphar)-(((np.sin(alpha4)/np.sin(v))-(q2/root_radius))*np.cos(v))/(root_radius))*np.cos(alpha1))**2)/(E*L(-(q2*np.sin(v))/(root_radius)+np.sin(alpha))**3)
+                    Ib1 = (12*(1+np.cos(alpha1)*((alpha2-alpha)*np.sin(alpha)-np.cos(alpha)))**2*(alpha2-alpha)*np.cos(alpha))/(E*L*(np.sin(alpha)+(alpha2-alpha)*np.cos(alpha)+np.sin(alpha)-(q2*np.sin(v))/(base_radius))**3)
+                    Ib = Ib0 + Ib1
+                    
+                    Is0 = (2.4*(1+v)*np.cos(alpha1)**2(np.sin(alpha)))/(E*L(np.sin(alpha)-(q2*np.sin(v))/(root_radius)*np.sin(v))**3)
+                    Is1 = (2.4*(1+v)*(alpha2-alpha)*np.cos(alpha)*np.cos(alpha1)**2)/(E*L*(np.sin(alpha)-(q2*np.sin(v))/(base_radius)+(alpha2-alpha)*np.cos(alpha)))
+                    Is = Is0 + Is1
+    
+        # Integrate over alfa
+        Kb_inv = np.sum(sc.integrate.trapezoid(Ib, x=alpha, axis=0))
+        Ks_inv = np.sum(sc.integrate.trapezoid(Is, x=alpha, axis=0))
+        Ka_inv = np.sum(sc.integrate.trapezoid(Ia, x=alpha, axis=0))
+        
+        if self.root_greater_than_base:
+            kb_inv += Ib0
+            ks_inv += Is0
         
         # Total stiffness
         Kt = 1 / (Kb_inv + Ks_inv + Ka_inv)
