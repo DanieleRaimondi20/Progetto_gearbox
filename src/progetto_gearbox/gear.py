@@ -137,9 +137,6 @@ class SpurGear(Model):
 
 
 
-
-
-
     def _get_diameters_and_radiuses(self) -> None:
         logger.debug("Setting gear useful diameters and radiuses...")
         pitch_diameter = self.teeth_number * self.module

@@ -1,6 +1,7 @@
 from datetime import datetime
 from pathlib import Path
 from logging import getLogger
+from progetto_gearbox import gear
 from progetto_gearbox.logging.logger_configuration import setup_logger
 from progetto_gearbox.gear import SpurGear
 from progetto_gearbox.gearbox import GearBox
@@ -72,6 +73,15 @@ def main(doc=None, server=None):
 
     driving_mesh_stiffness = []
     driven_mesh_stiffness = []
+    
+    tooth_damage = 0.2
+    hq1 = tooth_damage * hr
+    hr = 2 * driving_gear.root_radius * np.sin(driving_gear.alpha[3])
+    hb = 2 * driving_gear.base_radius * np.sin(driving_gear.alpha[2])
+    ha = hr/2 - hq1
+    
+    alpha_target = gearbox.find_alpha_bisection(min_radius=driving_gear.radiuses["addendum"], max_radius=driving_gear.radiuses["root"], base_radius=driving_gear.base_radius, alpha2=driving_gear.alpha[2], h_target=ha)
+    
     for driving_angle, driven_angle in zip(driving_angles,driven_angles):
         driving_gear_teeth_angles = driving_gear._get_teeth_centre_angle(driving_angle)
         driven_gear_teeth_angles = driven_gear._get_teeth_centre_angle(driven_angle)
