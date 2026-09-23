@@ -960,14 +960,22 @@ class GearBox(Model):
                       
                        
 def _find_alpha_bisection(min_radius: float, max_radius: float, base_radius: float, alpha2: float, h_target: float) -> float:
-    f_min = evaluate_bisection_function(min_radius, base_radius, alpha2, h_target)
-    f_max = evaluate_bisection_function(max_radius, base_radius, alpha2, h_target)
     iterations = []
-    assert f_min * f_max < 0, "Bisection method requires a change of sign in the function values at the endpoints."
+    
+    f_min = evaluate_bisection_function(min_radius, base_radius, alpha2, h_target)
     alpha_target, phi_target = _compute_alpha_phi(min_radius, base_radius, alpha2, h_target)
     iterations.append((min_radius, alpha_target, phi_target))
+    if abs(f_min) <= 1e-8:
+        return alpha_target, min_radius, phi_target, iterations
+        
+    f_max = evaluate_bisection_function(max_radius, base_radius, alpha2, h_target)
     alpha_target, phi_target = _compute_alpha_phi(max_radius, base_radius, alpha2, h_target)
     iterations.append((max_radius, alpha_target, phi_target))
+    if abs(f_max) <= 1e-8:
+        return  alpha_target, max_radius, phi_target, iterations
+    
+    assert f_min * f_max < 0, "Bisection method requires a change of sign in the function values at the endpoints."
+    
     delta = abs(max_radius - min_radius)
     while delta > 1e-6:
         mid_radius = (min_radius + max_radius) / 2
