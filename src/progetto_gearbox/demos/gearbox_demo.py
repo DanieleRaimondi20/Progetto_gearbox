@@ -17,7 +17,7 @@ def create_gear():
     logger.info("Creating the driving gear...")
     gear = SpurGear(name="driving_gear")
     gear.set_geometry(module=3.2 * 1e-3,teeth_number=31,thickness=0.0381)
-    gear.set_material(young=2.068 * 1e5, poisson=0.3, density = 7900)
+    gear.set_material(young=2.068 * 1e11, poisson=0.3, density = 7900)
     # gear.set_inertias(inertia_x=1,inertia_y=1,inertia_t=0.5)
     gear.get_state_space()
     return gear
@@ -26,7 +26,7 @@ def create_pinion():
     logger.info("Creating the pinion...")
     gear = SpurGear(name="driven_pinion")
     gear.set_geometry(module=3.2 * 1e-3,teeth_number=19,thickness=0.0381)
-    gear.set_material(young=2.068 * 1e5, poisson=0.3, density = 7900)
+    gear.set_material(young=2.068 * 1e11, poisson=0.3, density = 7900)
     # gear.set_inertias(inertia_x=0.5,inertia_y=0.5,inertia_t=2)
     gear.get_state_space()
     return gear
